@@ -1,0 +1,4 @@
+Idea 1: Run GA and GD
+
+Idea 2: Get a lot of solutions per curve. Then select the best 100 for each curve, the ones that optimize the hypervolume.
+
