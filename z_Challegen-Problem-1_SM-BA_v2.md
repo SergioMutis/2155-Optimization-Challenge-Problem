@@ -1,6 +1,11 @@
-# CHALLENGE PROBLEM 1 — (Sergio) Version 1
+# CHALLENGE PROBLEM 1 CODE – Version 2  
+2.156 ML & AI for Design Engineering  
+Berfin Ataman & Sergio Mutis
 
-# Instructions
+-----------------------------------------------------------------------------------
+
+
+# CP Instructions
 
 In this challenge problem, the task is to design **2D planar linkage mechanisms** that can trace six given target curves (the “egg” paths). The optimization must balance **accuracy** (distance to target curve) and **efficiency** (total material used), while respecting complexity constraints.
 
@@ -42,19 +47,37 @@ Your goal is to maximize the average hypervolume score across all six problems b
 
 ----------------------------------------------------------------------------------------
 
-# LOG
+# Method Outline
+1. Setup  
+2. Initial Population  
+3. GA Optimization  
+4. GD Refinement  
+5. Compare and Save Improved Solutions  
 
-- Cleaned the advance notebook to be more streamed-lined (SM)  
-- Parametriced the curve to run all optimizations by updating the curve (SM)  
-- Added a 'Compare and Save Improved Solutions' (SM)  
-   - Compares the hypervolume of the new set of solutions to the previous hypervolume, then save only if the new solutions are better for that curve. (incremental improvement)
+# LOG
+- Step 1: Cleaned the advance notebook to be more streamlined (SM)  
+- Step 1: Parametriced the curve to run all optimizations by updating the curve (SM)  
+- Step 2: Improved Initial Population (SM)  
+   - Generate seeds at fixed size N=7 to match GA encoding  
+   - Filter out invalid mechanisms (distance > 0.75, material > 10, >20 joints)  
+   - Early-stop once enough feasible seeds collected  
+   - Apply ε-deduplication + non-dominated filtering + max–min spread to select diverse seeds  
+   - Added progress bars and diagnostics for visibility  
+- Step 5: Added a 'Compare and Save Improved Solutions' (SM)  
+   - Compares the hypervolume of the new set of solutions to the previous hypervolume, then save only if the new solutions are better for that curve. (incremental improvement)  
 
 # TO-DO
+- Step 2: GA Multi-N generation  
+- Step 4: GD make GD a function of both material and distance  
+- Step 4: GD add adaptive decay  
+- Step 5: Compare & Save update → union old + new, Pareto-prune, recompute HV, and save  
+   - Ensures HV never decreases; if capped at 1000, apply HV-aware pruning with fallback  
+- General: Batch curve optimization (run on multiple indexes at once)  
+- General: Batch run seed (run GA+GD multiple times with different seeds → union results → prune to top 1000 HV)  
+- General: Parameterize optimization hyperparameters (pop_size, n_gen, per_size, target_valid, eps, GD step size, etc.) for easier tuning
 
-- Make GD be a function of both material and distance
-- Use GA to make mechanisms
-- Modify GA mutations and Cross-overs
-- Batch optimization (not one by one, i'd say it would be nice if it is like slecting indexes)
+
+
 
 # Official Hints:
 - Why not do some preprocessing to random mechanisms before running GA?
@@ -74,7 +97,7 @@ Target Optimization Curve
 
 ```python
 # --- Configurable target curve ---
-curve_index = 5   # 0-based index: 0 = Problem 1, 1 = Problem 2, ..., 5 = Problem 6
+curve_index = 0   # 0-based index: 0 = Problem 1, 1 = Problem 2, ..., 5 = Problem 6
 ```
 
 a. Environment Setup
@@ -275,23 +298,205 @@ class mechanism_synthesis_optimization(ElementwiseProblem):
 
 # 2. Initial Population
 
-a. Initial population - Randomized
+a. Imports and helpers
 
 
 ```python
-from LINKS.Optimization import MechanismRandomizer
-from LINKS.Visualization import MechanismVisualizer
+# === Section 2 — Cell 1: Seeding utilities (single-size, early-stop, ε-dedup) ===
+from LINKS.Optimization import MechanismRandomizer, Tools
+from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting
+from tqdm.auto import tqdm
+import numpy as np
+from time import perf_counter
+from collections import defaultdict
 
-randomizer = MechanismRandomizer(
-    min_size = 6, # smalllest mechanism to sample
-    max_size = 14, # largest mechanism to sample
-    device='cpu')
+# Use the same device everywhere
+TOOLS = Tools(device='cpu')
+TOOLS.compile()
 
-visualizer = MechanismVisualizer()
+def epsilon_dedup(F, eps=(5e-4, 5e-3)):
+    """
+    Keep at most one point per epsilon-box in (distance, material) objective space.
+    eps is (eps_distance, eps_material).
+    """
+    if len(F) == 0:
+        return np.array([], dtype=int)
+    keys = (np.floor(F[:,0]/eps[0]).astype(int), np.floor(F[:,1]/eps[1]).astype(int))
+    seen, keep = set(), []
+    for i, key in enumerate(zip(*keys)):
+        if key not in seen:
+            seen.add(key)
+            keep.append(i)
+    return np.array(keep, dtype=int)
 
-# Now let's generate 100 mechanisms of size 7 and initilize a population for optimization
-mechanisms = [randomizer(n=7) for _ in range(100)] #yeah
+def generate_pool_single_size(n=7, per_size=200, desc="Sampling mechanisms"):
+    """
+    Randomize mechanisms at exactly size n (to match GA encoding N=n).
+    """
+    t0 = perf_counter()
+    pool = []
+    randomizer = MechanismRandomizer(min_size=n, max_size=n, device='cpu')
+    for _ in tqdm(range(per_size), desc=f"{desc} n={n}", leave=False):
+        pool.append(randomizer(n=n))
+    print(f"[seed] sampled {len(pool)} candidates at n={n} in {perf_counter()-t0:.1f}s")
+    return pool
+
+def evaluate_mechs(mechs, target_curve, problem, diag_every=200,
+                   distance_max=0.75, material_max=10.0, max_joints=20,
+                   target_valid=120):
+    """
+    Evaluate pool, keep only constraint-satisfying candidates, show running diagnostics.
+    Early-stops once target_valid feasible candidates are collected.
+    """
+    t0 = perf_counter()
+    X_dicts, F_list, valid = [], [], []
+    size_hist = defaultdict(int)
+    best = {"distance": np.inf, "material": np.inf}
+    ref = np.array([distance_max, material_max])
+
+    pbar = tqdm(total=len(mechs), desc="[eval] checking constraints", leave=False)
+    for i, mech in enumerate(mechs, 1):
+        x0, edges, fixed_joints, motor = mech['x0'], mech['edges'], mech['fixed_joints'], mech['motor']
+        # default: last node is target
+        distance, material = TOOLS(x0, edges, fixed_joints, motor, target_curve, target_idx=x0.shape[0]-1)
+
+        best["distance"] = min(best["distance"], distance)
+        best["material"] = min(best["material"], material)
+
+        if (distance <= distance_max) and (material <= material_max) and (x0.shape[0] <= max_joints):
+            X = problem.convert_mech_to_1D(x0=x0, edges=edges, fixed_joints=fixed_joints,
+                                           target_idx=x0.shape[0]-1, motor=motor)
+            X_dicts.append(X)
+            F_list.append([distance, material])
+            valid.append(mech)
+            size_hist[x0.shape[0]] += 1
+
+        if (i % diag_every == 0) or (i == len(mechs)):
+            acc = len(X_dicts) / i
+            pbar.set_postfix({
+                "seen": i,
+                "valid": len(X_dicts),
+                "acc%": f"{100*acc:.1f}",
+                "best_d": f"{best['distance']:.3f}",
+                "best_m": f"{best['material']:.3f}"
+            })
+        pbar.update(1)
+
+        # Early stop if we hit target_valid feasible seeds
+        if len(X_dicts) >= target_valid:
+            break
+
+    pbar.close()
+
+    F = np.array(F_list) if F_list else np.zeros((0,2))
+    print(f"[eval] done in {perf_counter()-t0:.1f}s | valid={len(X_dicts)} "
+          f"({100*len(X_dicts)/max(1, min(len(mechs), i)):.1f}%)")
+    if len(X_dicts):
+        print(f"[eval] valid F ranges: distance [{F[:,0].min():.3f}, {F[:,0].max():.3f}] | "
+              f"material [{F[:,1].min():.3f}, {F[:,1].max():.3f}] | ref={tuple(ref)}")
+        sizes_sorted = sorted(size_hist.items())
+        dist_str = ", ".join([f"n={k}:{v}" for k,v in sizes_sorted])
+        print(f"[eval] size distribution among valid: {dist_str}")
+    return X_dicts, F, valid
+
+def select_diverse_non_dominated(X_dicts, F, k=100, title="[seed selection]"):
+    """
+    1) Non-dominated filter, 2) Max-min spread selection to k.
+    (Assumes ε-dedup already applied if desired.)
+    """
+    if len(X_dicts) == 0:
+        print(f"{title} no candidates to select."); return []
+    nds = NonDominatedSorting().do(F, only_non_dominated_front=True)
+    X_nd, F_nd = [X_dicts[i] for i in nds], F[nds]
+    print(f"{title} non-dominated front size: {len(X_nd)}")
+
+    if len(X_nd) <= k:
+        print(f"{title} selected all {len(X_nd)} (<= k={k})")
+        return X_nd
+
+    # Greedy max-min spread
+    chosen = [int(np.argmin(F_nd.sum(axis=1)))]
+    dist = np.linalg.norm(F_nd - F_nd[chosen[0]], axis=1)
+    for _ in tqdm(range(k-1), desc=f"{title} max-min pick", leave=False):
+        next_i = int(np.argmax(dist))
+        chosen.append(next_i)
+        dist = np.minimum(dist, np.linalg.norm(F_nd - F_nd[next_i], axis=1))
+    print(f"{title} selected k={k} diverse seeds")
+    return [X_nd[i] for i in chosen]
+
+
 ```
+
+b. Generate and evaluate pool
+
+
+```python
+# === Section 2 — Cell 2: Build initial pool and filter (single-size matching GA N) ===
+# IMPORTANT: Make sure GA encoding uses the same N below.
+GA_N = 7  # must match the N used when you instantiate `problem` in Section 3
+
+# Reuse your existing problem object if already defined earlier:
+try:
+    problem
+except NameError:
+    problem = mechanism_synthesis_optimization(target_curves[curve_index], N=GA_N)
+
+# Step 1: generate pool (exactly n=GA_N to avoid padding artifacts)
+raw_pool = generate_pool_single_size(n=GA_N, per_size=200)  # tweak per_size if needed
+
+# Step 2: evaluate and filter with early-stop
+X_dicts, F, valid_mechs = evaluate_mechs(
+    raw_pool,
+    target_curve=target_curves[curve_index],
+    problem=problem,
+    diag_every=200,
+    distance_max=0.75,   # you can tighten (e.g., 0.60) to bias better seeds
+    material_max=10.0,   # you can tighten (e.g., 9.0) to leave headroom
+    max_joints=20,
+    target_valid=120     # early-stop once we have enough good seeds
+)
+
+```
+
+
+    Sampling mechanisms n=7:   0%|          | 0/200 [00:00<?, ?it/s]
+
+
+    [seed] sampled 200 candidates at n=7 in 11.6s
+    
+
+
+    [eval] checking constraints:   0%|          | 0/200 [00:00<?, ?it/s]
+
+
+    [eval] done in 1.2s | valid=1 (0.5%)
+    [eval] valid F ranges: distance [0.587, 0.587] | material [5.386, 5.386] | ref=(np.float64(0.75), np.float64(10.0))
+    [eval] size distribution among valid: n=7:1
+    
+
+c. Select initial population
+
+
+```python
+# === Section 2 — Cell 3: ε-dedup + pick diverse non-dominated seeds ===
+# Optional ε-dedup before selecting spread to reduce near-duplicates
+if len(F) > 0:
+    dd_idx = epsilon_dedup(F, eps=(5e-4, 5e-3))  # tweak eps if too aggressive
+    X_dd = [X_dicts[i] for i in dd_idx]
+    F_dd = F[dd_idx]
+else:
+    X_dd, F_dd = [], F
+
+initial_population = select_diverse_non_dominated(X_dd, F_dd, k=100, title="[seed selection]")
+print(f"[seed] → init pop size: {len(initial_population)}")
+
+
+```
+
+    [seed selection] non-dominated front size: 1
+    [seed selection] selected all 1 (<= k=100)
+    [seed] → init pop size: 1
+    
 
 # 3. GA Optimization
 
@@ -299,21 +504,31 @@ b. GA Optimization Setup
 
 
 ```python
-problem = mechanism_synthesis_optimization(target_curves[curve_index], N=7)
+# === GA Optimization Setup (using seeded initial_population) ===
+# expects: `problem` already defined and `initial_population` from Section 2
 
-initial_population = [problem.convert_mech_to_1D(**mech) for mech in mechanisms]
+try:
+    seeded = initial_population  # from Section 2
+except NameError:
+    # Fallback: build from prior `mechanisms` if Section 2 wasn't run
+    seeded = [problem.convert_mech_to_1D(**mech) for mech in mechanisms]
+    print("[warn] Using fallback seeds from `mechanisms` (run Section 2 for better seeds).")
 
-class sample_from_random(Sampling):
-        def _do(self, problem, n_samples, **kwargs):
-                return np.array([initial_population[i%len(initial_population)] for i in range(n_samples)])
+if len(seeded) == 0:
+    raise ValueError("No seeds available. Ensure Section 2 created a non-empty `initial_population`.")
 
-F = problem.evaluate(np.array(initial_population))[0]
-print(f'Best Distance Performance In random population: {F[:,0].min()}')
-print(f'Best Material Performance In random population: {F[:,1].min()}')
+class sample_from_seeds(Sampling):
+    def _do(self, problem, n_samples, **kwargs):
+        return np.array([seeded[i % len(seeded)] for i in range(n_samples)], dtype=object)
+
+F = problem.evaluate(np.array(seeded, dtype=object))[0]
+print(f"[seed] count={len(seeded)} | "
+      f"dist[min/mean]={F[:,0].min():.3f}/{F[:,0].mean():.3f} | "
+      f"mat[min/mean]={F[:,1].min():.3f}/{F[:,1].mean():.3f}")
+
 ```
 
-    Best Distance Performance In random population: 1.1201430559158325
-    Best Material Performance In random population: 5.041465759277344
+    [seed] count=1 | dist[min/mean]=0.587/0.587 | mat[min/mean]=5.386/5.386
     
 
 c. GA Optimization
@@ -321,7 +536,7 @@ c. GA Optimization
 
 ```python
 algorithm = NSGA2(pop_size=100,
-                  sampling=sample_from_random(),
+                  sampling=sample_from_seeds(),
                   mating=MixedVariableMating(eliminate_duplicates=MixedVariableDuplicateElimination()),
                   mutation=PolynomialMutation(prob=0.5),
                   eliminate_duplicates=MixedVariableDuplicateElimination())
@@ -338,106 +553,106 @@ results = minimize(problem,
     ==========================================================================================
     n_gen  |  n_eval  | n_nds  |     cv_min    |     cv_avg    |      eps      |   indicator  
     ==========================================================================================
-         1 |      100 |      1 |  0.5032740831 |  9.3229527187 |             - |             -
-         2 |      200 |      1 |  0.5032740831 |  7.8668462682 |             - |             -
-         3 |      300 |      1 |  0.5032740831 |  7.0790119767 |             - |             -
-         4 |      400 |      1 |  0.5032740831 |  6.2569662237 |             - |             -
-         5 |      500 |      1 |  0.5032740831 |  5.7842779756 |             - |             -
-         6 |      600 |      1 |  0.5032740831 |  4.8983974504 |             - |             -
-         7 |      700 |      1 |  0.5032740831 |  4.3355570304 |             - |             -
-         8 |      800 |      1 |  0.5032740831 |  4.0149619257 |             - |             -
-         9 |      900 |      1 |  0.5032740831 |  3.8016345060 |             - |             -
-        10 |     1000 |      1 |  0.5032740831 |  3.7607729328 |             - |             -
-        11 |     1100 |      1 |  0.5032740831 |  3.6018219674 |             - |             -
-        12 |     1200 |      1 |  0.5032740831 |  3.5362361014 |             - |             -
-        13 |     1300 |      1 |  0.5032740831 |  3.4506004560 |             - |             -
-        14 |     1400 |      1 |  0.5032740831 |  3.3592364514 |             - |             -
-        15 |     1500 |      1 |  0.000000E+00 |  3.1916613972 |             - |             -
-        16 |     1600 |      1 |  0.000000E+00 |  3.1245848310 |  0.000000E+00 |             f
-        17 |     1700 |      1 |  0.000000E+00 |  3.0748681462 |  0.000000E+00 |             f
-        18 |     1800 |      1 |  0.000000E+00 |  2.9840192091 |  0.5066699982 |         ideal
-        19 |     1900 |      1 |  0.000000E+00 |  2.9688263428 |  0.000000E+00 |             f
-        20 |     2000 |      1 |  0.000000E+00 |  2.8187571889 |  0.000000E+00 |             f
-        21 |     2100 |      2 |  0.000000E+00 |  2.7317843014 |  1.0000000000 |         ideal
-        22 |     2200 |      3 |  0.000000E+00 |  2.5781266624 |  0.2361747520 |         ideal
-        23 |     2300 |      3 |  0.000000E+00 |  2.4931926972 |  0.000000E+00 |             f
-        24 |     2400 |      3 |  0.000000E+00 |  2.3448155981 |  0.000000E+00 |             f
-        25 |     2500 |      3 |  0.000000E+00 |  2.2582360035 |  0.000000E+00 |             f
-        26 |     2600 |      3 |  0.000000E+00 |  2.1531884164 |  0.000000E+00 |             f
-        27 |     2700 |      3 |  0.000000E+00 |  2.0424603552 |  0.000000E+00 |             f
-        28 |     2800 |      3 |  0.000000E+00 |  2.0180695528 |  0.000000E+00 |             f
-        29 |     2900 |      3 |  0.000000E+00 |  1.8430685669 |  0.2509031904 |         ideal
-        30 |     3000 |      3 |  0.000000E+00 |  1.7298326129 |  0.000000E+00 |             f
-        31 |     3100 |      4 |  0.000000E+00 |  1.6787969774 |  0.1797981822 |             f
-        32 |     3200 |      4 |  0.000000E+00 |  1.6259235460 |  0.000000E+00 |             f
-        33 |     3300 |      4 |  0.000000E+00 |  1.4874615914 |  0.000000E+00 |             f
-        34 |     3400 |      4 |  0.000000E+00 |  1.3795301497 |  0.000000E+00 |             f
-        35 |     3500 |      4 |  0.000000E+00 |  1.2674189353 |  0.000000E+00 |             f
-        36 |     3600 |      4 |  0.000000E+00 |  1.1907038057 |  0.000000E+00 |             f
-        37 |     3700 |      4 |  0.000000E+00 |  1.1568714082 |  0.000000E+00 |             f
-        38 |     3800 |      4 |  0.000000E+00 |  1.0977252591 |  0.000000E+00 |             f
-        39 |     3900 |      4 |  0.000000E+00 |  1.0591036355 |  0.000000E+00 |             f
-        40 |     4000 |      4 |  0.000000E+00 |  0.9681720281 |  0.000000E+00 |             f
-        41 |     4100 |      5 |  0.000000E+00 |  0.9113025331 |  0.2952060959 |         ideal
-        42 |     4200 |      5 |  0.000000E+00 |  0.8923794043 |  0.000000E+00 |             f
-        43 |     4300 |      5 |  0.000000E+00 |  0.8492921603 |  0.000000E+00 |             f
-        44 |     4400 |      5 |  0.000000E+00 |  0.8112130183 |  0.000000E+00 |             f
-        45 |     4500 |      5 |  0.000000E+00 |  0.7878050524 |  0.000000E+00 |             f
-        46 |     4600 |      5 |  0.000000E+00 |  0.7528052765 |  0.000000E+00 |             f
-        47 |     4700 |      6 |  0.000000E+00 |  0.7089083797 |  0.3480349624 |         ideal
-        48 |     4800 |      6 |  0.000000E+00 |  0.6509441668 |  0.000000E+00 |             f
-        49 |     4900 |      6 |  0.000000E+00 |  0.5995632112 |  0.000000E+00 |             f
-        50 |     5000 |      6 |  0.000000E+00 |  0.5770932442 |  0.000000E+00 |             f
-        51 |     5100 |      6 |  0.000000E+00 |  0.5360839021 |  0.000000E+00 |             f
-        52 |     5200 |      6 |  0.000000E+00 |  0.4928899801 |  0.000000E+00 |             f
-        53 |     5300 |      6 |  0.000000E+00 |  0.4544237262 |  0.000000E+00 |             f
-        54 |     5400 |      6 |  0.000000E+00 |  0.3961616892 |  0.0180475285 |         ideal
-        55 |     5500 |      6 |  0.000000E+00 |  0.3784818715 |  0.000000E+00 |             f
-        56 |     5600 |      7 |  0.000000E+00 |  0.3294643229 |  0.0151385672 |             f
-        57 |     5700 |      7 |  0.000000E+00 |  0.2789089954 |  0.0346754788 |             f
-        58 |     5800 |      7 |  0.000000E+00 |  0.2347766423 |  0.000000E+00 |             f
-        59 |     5900 |      7 |  0.000000E+00 |  0.2101253307 |  0.000000E+00 |             f
-        60 |     6000 |      8 |  0.000000E+00 |  0.1895540148 |  0.0891294768 |         ideal
-        61 |     6100 |      7 |  0.000000E+00 |  0.1541518635 |  0.0093715805 |             f
-        62 |     6200 |      7 |  0.000000E+00 |  0.1497908062 |  0.000000E+00 |             f
-        63 |     6300 |      6 |  0.000000E+00 |  0.1235965335 |  0.0256255725 |             f
-        64 |     6400 |      6 |  0.000000E+00 |  0.1089224255 |  0.000000E+00 |             f
-        65 |     6500 |      6 |  0.000000E+00 |  0.0893912172 |  0.000000E+00 |             f
-        66 |     6600 |      6 |  0.000000E+00 |  0.0712768221 |  0.000000E+00 |             f
-        67 |     6700 |      6 |  0.000000E+00 |  0.0609571832 |  0.000000E+00 |             f
-        68 |     6800 |      6 |  0.000000E+00 |  0.0460545534 |  0.000000E+00 |             f
-        69 |     6900 |      6 |  0.000000E+00 |  0.0389863151 |  0.000000E+00 |             f
-        70 |     7000 |      2 |  0.000000E+00 |  0.0234129262 |  0.0111384372 |         ideal
-        71 |     7100 |      2 |  0.000000E+00 |  0.0160946059 |  0.000000E+00 |             f
-        72 |     7200 |      2 |  0.000000E+00 |  0.0104192954 |  0.000000E+00 |             f
-        73 |     7300 |      2 |  0.000000E+00 |  0.0049078053 |  0.000000E+00 |             f
-        74 |     7400 |      3 |  0.000000E+00 |  0.0003386205 |  0.1999514207 |             f
-        75 |     7500 |      3 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        76 |     7600 |      3 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        77 |     7700 |      3 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        78 |     7800 |      3 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        79 |     7900 |      3 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        80 |     8000 |      3 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        81 |     8100 |      3 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        82 |     8200 |      3 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        83 |     8300 |      3 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        84 |     8400 |      3 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        85 |     8500 |      3 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        86 |     8600 |      3 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        87 |     8700 |      4 |  0.000000E+00 |  0.000000E+00 |  0.1678751678 |             f
-        88 |     8800 |      4 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        89 |     8900 |      4 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        90 |     9000 |      4 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        91 |     9100 |      4 |  0.000000E+00 |  0.000000E+00 |  0.0522724288 |             f
-        92 |     9200 |      4 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        93 |     9300 |      4 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        94 |     9400 |      4 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        95 |     9500 |      4 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        96 |     9600 |      4 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        97 |     9700 |      4 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        98 |     9800 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0097749955 |         ideal
-        99 |     9900 |      5 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-       100 |    10000 |      5 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+         1 |        1 |      1 |  0.000000E+00 |  0.000000E+00 |             - |             -
+         2 |      101 |      3 |  0.000000E+00 |           INF |  1.7314422982 |         ideal
+         3 |      201 |      3 |  0.000000E+00 |           INF |  0.000000E+00 |             f
+         4 |      301 |      3 |  0.000000E+00 |           INF |  0.000000E+00 |             f
+         5 |      401 |      3 |  0.000000E+00 |           INF |  0.000000E+00 |             f
+         6 |      501 |      3 |  0.000000E+00 |  0.0647216100 |  0.000000E+00 |             f
+         7 |      601 |      4 |  0.000000E+00 |  0.000000E+00 |  0.0004239819 |             f
+         8 |      701 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0757263538 |             f
+         9 |      801 |      5 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        10 |      901 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0066597663 |             f
+        11 |     1001 |      6 |  0.000000E+00 |  0.000000E+00 |  0.0903126134 |         ideal
+        12 |     1101 |      6 |  0.000000E+00 |  0.000000E+00 |  0.5560129507 |         ideal
+        13 |     1201 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0299969777 |             f
+        14 |     1301 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0132922056 |             f
+        15 |     1401 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0016813822 |             f
+        16 |     1501 |      6 |  0.000000E+00 |  0.000000E+00 |  0.1482957375 |         ideal
+        17 |     1601 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0253814383 |             f
+        18 |     1701 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0105541536 |             f
+        19 |     1801 |      9 |  0.000000E+00 |  0.000000E+00 |  0.2231570003 |         ideal
+        20 |     1901 |      9 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        21 |     2001 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0764794561 |         ideal
+        22 |     2101 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0198372220 |             f
+        23 |     2201 |     10 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        24 |     2301 |     13 |  0.000000E+00 |  0.000000E+00 |  0.8215708825 |         ideal
+        25 |     2401 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0303427219 |             f
+        26 |     2501 |     12 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        27 |     2601 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0055375632 |             f
+        28 |     2701 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0005046254 |             f
+        29 |     2801 |      6 |  0.000000E+00 |  0.000000E+00 |  0.0216761517 |             f
+        30 |     2901 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0723088254 |         ideal
+        31 |     3001 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0084736286 |             f
+        32 |     3101 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0075341643 |             f
+        33 |     3201 |      8 |  0.000000E+00 |  0.000000E+00 |  0.2278678920 |         ideal
+        34 |     3301 |      4 |  0.000000E+00 |  0.000000E+00 |  0.0340886746 |         ideal
+        35 |     3401 |      4 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        36 |     3501 |      6 |  0.000000E+00 |  0.000000E+00 |  0.1147246065 |         ideal
+        37 |     3601 |      6 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        38 |     3701 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0101897713 |         ideal
+        39 |     3801 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0033826478 |             f
+        40 |     3901 |      9 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        41 |     4001 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0173286963 |         ideal
+        42 |     4101 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0151078695 |             f
+        43 |     4201 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0010931337 |             f
+        44 |     4301 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0010931337 |             f
+        45 |     4401 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0328362985 |             f
+        46 |     4501 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0002340228 |             f
+        47 |     4601 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0002340228 |             f
+        48 |     4701 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0002340228 |             f
+        49 |     4801 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0009458049 |             f
+        50 |     4901 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0008727678 |             f
+        51 |     5001 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0250548920 |             f
+        52 |     5101 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0323098115 |         ideal
+        53 |     5201 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0280551442 |         ideal
+        54 |     5301 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0021769676 |             f
+        55 |     5401 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0124716525 |             f
+        56 |     5501 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0685207506 |         ideal
+        57 |     5601 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0605485675 |         ideal
+        58 |     5701 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0026752162 |             f
+        59 |     5801 |     18 |  0.000000E+00 |  0.000000E+00 |  0.0044189101 |             f
+        60 |     5901 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0059679998 |         ideal
+        61 |     6001 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0006010926 |             f
+        62 |     6101 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0043605477 |             f
+        63 |     6201 |     11 |  0.000000E+00 |  0.000000E+00 |  0.1290916501 |         ideal
+        64 |     6301 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0502270744 |             f
+        65 |     6401 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0102423221 |             f
+        66 |     6501 |     12 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        67 |     6601 |     12 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        68 |     6701 |     12 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        69 |     6801 |     12 |  0.000000E+00 |  0.000000E+00 |  0.1096450914 |         ideal
+        70 |     6901 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0593881570 |         ideal
+        71 |     7001 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0107798124 |             f
+        72 |     7101 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        73 |     7201 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        74 |     7301 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0030894852 |             f
+        75 |     7401 |     17 |  0.000000E+00 |  0.000000E+00 |  0.0036279386 |             f
+        76 |     7501 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0683854845 |         nadir
+        77 |     7601 |     17 |  0.000000E+00 |  0.000000E+00 |  0.0760353525 |         ideal
+        78 |     7701 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0249397955 |             f
+        79 |     7801 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        80 |     7901 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0192874200 |             f
+        81 |     8001 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0054196519 |             f
+        82 |     8101 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0018416074 |             f
+        83 |     8201 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0052746038 |             f
+        84 |     8301 |     15 |  0.000000E+00 |  0.000000E+00 |  0.1077879179 |         ideal
+        85 |     8401 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        86 |     8501 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        87 |     8601 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0126216682 |             f
+        88 |     8701 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0046381913 |             f
+        89 |     8801 |     17 |  0.000000E+00 |  0.000000E+00 |  0.0002520234 |             f
+        90 |     8901 |     17 |  0.000000E+00 |  0.000000E+00 |  0.0002520234 |             f
+        91 |     9001 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0079730583 |             f
+        92 |     9101 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0040783994 |             f
+        93 |     9201 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        94 |     9301 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        95 |     9401 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0026826784 |             f
+        96 |     9501 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0066458368 |             f
+        97 |     9601 |     11 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        98 |     9701 |     11 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        99 |     9801 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0104749022 |             f
+       100 |     9901 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0048196472 |             f
     
 
 d. Hypervolume Check
@@ -467,12 +682,12 @@ else:
     print('Did Not Find Solutions!!')
 ```
 
-    Hyper Volume ~ 1.890236
+    Hyper Volume ~ 3.795211
     
 
 
     
-![png](output_22_1.png)
+![png](output_26_1.png)
     
 
 
@@ -688,15 +903,15 @@ else:
 
 ```
 
-    [info] Using combined post-GD population (10 solutions).
+    [info] Using combined post-GD population (20 solutions).
     
-    === Evaluating Problem 6 (curve_index=5) ===
-    Current saved Problem 6 score: 0.000000 (with 0 solutions)
-    Candidate Problem 6 score:    2.179690 (with 10 solutions)
-    [backup] my_submission.20250929-014004.bak.npy
-    → Updated Problem 6. Δscore = +2.179690
-    → New Problem 6 score: 2.179690
-    → Overall submission score: 2.649030 (was 2.285749)
+    === Evaluating Problem 1 (curve_index=0) ===
+    Current saved Problem 1 score: 3.291320 (with 12 solutions)
+    Candidate Problem 1 score:    4.070118 (with 20 solutions)
+    [backup] my_submission.20250929-025329.bak.npy
+    → Updated Problem 1. Δscore = +0.778797
+    → New Problem 1 score: 4.070118
+    → Overall submission score: 2.778830 (was 2.649030)
     
 
 
@@ -713,10 +928,10 @@ print(score)
 
 ```
 
-    {'Overall Score': 2.649030376061854, 'Score Breakdown': {'Problem 1': 3.2913203201667685, 'Problem 2': 1.8311033755866362, 'Problem 3': 3.1251822811640793, 'Problem 4': 3.144530341569336, 'Problem 5': 2.322355471764368, 'Problem 6': 2.1796904661199363}}
+    {'Overall Score': 2.778829941417579, 'Score Breakdown': {'Problem 1': 4.070117712301119, 'Problem 2': 1.8311033755866362, 'Problem 3': 3.1251822811640793, 'Problem 4': 3.144530341569336, 'Problem 5': 2.322355471764368, 'Problem 6': 2.1796904661199363}}
     
 
-# Save File as Markdown
+# Extra. Save File as Markdown
 
 
 ```python
@@ -756,40 +971,5 @@ except Exception as e:
 
 ```
 
-    Collecting ipynbname
-      Downloading ipynbname-2025.8.0.0-py3-none-any.whl.metadata (2.2 kB)
-    Requirement already satisfied: ipykernel in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipynbname) (6.30.1)
-    Requirement already satisfied: comm>=0.1.1 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (0.2.3)
-    Requirement already satisfied: debugpy>=1.6.5 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (1.8.17)
-    Requirement already satisfied: ipython>=7.23.1 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (9.5.0)
-    Requirement already satisfied: jupyter-client>=8.0.0 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (8.6.3)
-    Requirement already satisfied: jupyter-core!=5.0.*,>=4.12 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (5.8.1)
-    Requirement already satisfied: matplotlib-inline>=0.1 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (0.1.7)
-    Requirement already satisfied: nest-asyncio>=1.4 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (1.6.0)
-    Requirement already satisfied: packaging>=22 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (25.0)
-    Requirement already satisfied: psutil>=5.7 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (7.1.0)
-    Requirement already satisfied: pyzmq>=25 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (27.1.0)
-    Requirement already satisfied: tornado>=6.2 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (6.5.2)
-    Requirement already satisfied: traitlets>=5.4.0 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (5.14.3)
-    Requirement already satisfied: colorama in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (0.4.6)
-    Requirement already satisfied: decorator in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (5.2.1)
-    Requirement already satisfied: ipython-pygments-lexers in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (1.1.1)
-    Requirement already satisfied: jedi>=0.16 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (0.19.2)
-    Requirement already satisfied: prompt_toolkit<3.1.0,>=3.0.41 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (3.0.52)
-    Requirement already satisfied: pygments>=2.4.0 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (2.19.2)
-    Requirement already satisfied: stack_data in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (0.6.3)
-    Requirement already satisfied: typing_extensions>=4.6 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (4.15.0)
-    Requirement already satisfied: wcwidth in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from prompt_toolkit<3.1.0,>=3.0.41->ipython>=7.23.1->ipykernel->ipynbname) (0.2.14)
-    Requirement already satisfied: parso<0.9.0,>=0.8.4 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from jedi>=0.16->ipython>=7.23.1->ipykernel->ipynbname) (0.8.5)
-    Requirement already satisfied: python-dateutil>=2.8.2 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from jupyter-client>=8.0.0->ipykernel->ipynbname) (2.9.0.post0)
-    Requirement already satisfied: platformdirs>=2.5 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from jupyter-core!=5.0.*,>=4.12->ipykernel->ipynbname) (4.4.0)
-    Requirement already satisfied: pywin32>=300 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from jupyter-core!=5.0.*,>=4.12->ipykernel->ipynbname) (311)
-    Requirement already satisfied: six>=1.5 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from python-dateutil>=2.8.2->jupyter-client>=8.0.0->ipykernel->ipynbname) (1.17.0)
-    Requirement already satisfied: executing>=1.2.0 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from stack_data->ipython>=7.23.1->ipykernel->ipynbname) (2.2.1)
-    Requirement already satisfied: asttokens>=2.1.0 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from stack_data->ipython>=7.23.1->ipykernel->ipynbname) (3.0.0)
-    Requirement already satisfied: pure-eval in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from stack_data->ipython>=7.23.1->ipykernel->ipynbname) (0.2.3)
-    Downloading ipynbname-2025.8.0.0-py3-none-any.whl (4.5 kB)
-    Installing collected packages: ipynbname
-    Successfully installed ipynbname-2025.8.0.0
-    ✅ Saved as c:\Users\smuti\OneDrive\Desktop\CM_3D-Pen\2155-Optimization-Challenge-Problem\z_Challegen-Problem-1_SM-BA_v1.md
+    ✅ Saved as c:\Users\smuti\OneDrive\Desktop\CM_3D-Pen\2155-Optimization-Challenge-Problem\z_Challegen-Problem-1_SM-BA_v2.md
     

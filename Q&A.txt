@@ -1,4 +1,157 @@
-Idea 1: Run GA and GD
+GAME PLAN
 
-Idea 2: Get a lot of solutions per curve. Then select the best 100 for each curve, the ones that optimize the hypervolume.
+Goal recap: For each of the 6 target curves, submit up to 1000 valid mechanisms (Distance ≤ 0.75, Material ≤ 10.0, ≤ 20 joints) that maximize hypervolume (reference point: (0.75, 10.0)).
 
+
+1. Minimum plan (end-to-end)
+    A. Bulk seeding (diverse, valid starts)
+
+        1. Use MechanismRandomizer to sample a large pool (e.g., 5k–10k) with a bounded size per curve (say 7–14 joints).
+
+        2. Evaluate with Tools and filter to valid (distance ≤ 0.75 & material ≤ 10). Keep all valid seeds as your initial “bank.”
+        Rationale: The advanced notebook shows GA on structure can stall unless you seed with decent, diverse mechanisms; the randomizer is provided precisely to fix this initialization problem.
+
+    B. Two-track optimization per curve
+
+        1. GA track (diversify the Pareto front)
+            a. Use NSGA-II:
+                Starter case: optimize positions on a fixed skeleton (baseline)
+                Advanced case: optimize mixed variables (positions + connectivity upper-triangle) with the improved 1D encoding
+
+            b. Initialize GA from a subset of your valid seeds (e.g., pick 1000–2000 diverse seeds by clustering in objective space or by farthest-point sampling).
+            
+            c. Run moderate gens (e.g., 100–200) and keep all valid non-dominated elites found along the way.
+
+        2. GD (local refinement) track
+            a. Take the top K GA elites (e.g., 300–800) and run gradient descent on positions using DifferentiableTools (keep connectivity fixed during GD).
+            
+            b. Respect constraints (project/clip if needed).
+            c. Keep only solutions that remain valid.
+
+    C. Pool, de-duplicate, and pick the best 1000
+
+        1. Combine: seeds (valid), GA elites (valid), GD-refined (valid).
+
+        2. De-duplicate (same edges & near-identical positions; or near-identical (distance, material)).
+
+        3. Select top 1000 by hypervolume contribution: greedily add points that most increase HV; removing points generally reduces HV unless redundant.
+
+Repeat A–C for each of the 6 curves. Package per the submission format.
+(Why this works: It matches the scoring mechanics (HV), obeys constraints, and follows the notebooks’ guidance about initialization and mixed-variable GA struggles without good seeds)
+
+
+
+2. Covered strategies (already in our minimum plan)
+
+    * Strong population initialization (randomized valid seeds; use as GA init)
+
+    * Mixed-variable GA (advanced): optimize positions + upper-triangular connectivity, motor fixed, reduced variables
+
+    * Constraint-aware evolution: enforce Distance ≤ 0.75 and Material ≤ 10.0 in evaluation/out["G"] and filter to valid
+
+    * Hybrid GA → GD: GA for exploration, GD with DifferentiableTools for local refinement on positions
+
+    * Bank-and-blend: combine seeds + GA elites + GD-refined, de-duplicate, then pick top 1000 by hypervolume contribution
+
+
+3. New strategies to add (to improve the plan)
+
+    * EASY - Seed with the Starter mechanism (positions-only runs)
+    Use the provided starter mechanism as part of the initial population for the starter flow (pymoo sampling replaced by duplicated x0, as shown) to speed early feasibility
+
+    * Target-node control schedule (advanced runs)
+    Treat target_idx as a staged variable: start with it fixed or in a small set for stability, then relax to full search after geometry improves
+
+    * KEY - Portfolio breadth made explicit
+    Run multiple GA jobs per curve varying: N ∈ {6,7,8,9,10,12,14}, crossover/mutation settings, random seeds, and different seed pools; then merge valid Pareto sets before HV selection (this is implied now—make it systematic)
+
+    * KEY - Diversity-aware seeding & selection
+    When picking GA init seeds and when pruning to 1000 for submission, maximize spread in (Distance, Material) (e.g., farthest-point or k-means in objective space) to avoid crowding and usually increase HV.
+
+    * Short “repair” GD for near-valids
+    For elites that barely violate constraints, try a brief GD repair pass (positions only) with penalty/constraint projection before discarding.
+
+    * Connectivity sparsity bias (light)
+    In advanced GA, add a light bias/regularizer toward sparser graphs (helps material) and relax it if Distance stalls.
+
+    * Mechanism-size curriculum
+    Start with smaller N to hit validity fast, then grow N for tougher curves—carry forward good structures as seeds when scaling up.
+
+    * HINT - Preprocessing of random mechanisms (instructor hint)
+    Before GA, filter random mechs by topology (connected, motor linked), fast coarse eval, and duplicate culling to improve initial population quality.
+
+    * KEY - Multi-objective GD using both Distance and Material gradients (instructor hint)
+    Run gradient descent that uses gradients of both functions, e.g. scalarization with rotating weights or ε-constraint style updates.
+
+    * Explicit GA ↔ GD cycles (instructor hint)
+    Alternate between GA exploration, GD refinement, and light GA “shake” runs to re-diversify, then merge results before final selection.
+
+    * Smarter gradient-based optimization methods (instructor hint)
+    Try optimizers like Adam or L-BFGS on positions with penalties for constraints, plus step-size control or line search to stabilize convergence.
+
+    * Systematic GA operator sweeps (instructor hint)
+    Run experiments varying crossover/mutation parameters and include repair operators to keep adjacency matrices valid.
+
+
+4. Updated Plan
+
+    A. Bulk seeding (diverse, valid starts)
+
+        1. Use MechanismRandomizer to sample a large pool (e.g., 5k–10k) with a bounded size per curve (say 7–14 joints).
+
+        2. Evaluate with Tools and filter to valid (distance ≤ 0.75 & material ≤ 10). 
+           Keep all valid seeds as your initial “bank.”
+
+        3. Preprocess random mechanisms (medium priority):
+           Before GA, reject obvious invalids by checking connectivity (no isolated nodes, motors connected), 
+           run a coarse evaluation to prune the bottom-performing fraction, and remove near-duplicates.
+           This improves the diversity and quality of seeds for GA.
+
+        Rationale: The advanced notebook shows GA on structure can stall unless you seed with decent, 
+        diverse mechanisms; the randomizer and preprocessing steps help provide this.
+
+    B. Two-track optimization per curve
+
+        1. GA track (diversify the Pareto front)
+            a. Use NSGA-II:
+                Starter case: optimize positions on a fixed skeleton (baseline)
+                Advanced case: optimize mixed variables (positions + connectivity upper-triangle) with the improved 1D encoding
+
+            b. Initialize GA from a subset of your valid seeds (e.g., pick 1000–2000 diverse seeds by clustering 
+               in objective space or by farthest-point sampling).
+
+            c. Portfolio breadth (high priority):
+               Run multiple GA jobs per curve with varied N ∈ {6,7,8,9,10,12,14}, different random seeds, 
+               and varied crossover/mutation parameters. Merge all valid non-dominated solutions before final selection.
+
+            d. Run moderate gens (e.g., 100–200) per GA job and keep all valid non-dominated elites found along the way.
+
+        2. GD (local refinement) track
+            a. Take the top K GA elites (e.g., 300–800) and run gradient descent on positions using DifferentiableTools 
+               (keep connectivity fixed during GD).
+
+            b. Multi-objective GD (high priority):
+               Use gradients of both Distance and Material together. For example, apply scalarization with rotating weights 
+               or ε-constraint updates to refine solutions toward the Pareto frontier.
+
+            c. Respect constraints (project/clip if needed).
+
+            d. Keep only solutions that remain valid.
+
+    C. Pool, de-duplicate, and pick the best 1000
+
+        1. Combine: seeds (valid), GA elites (valid), GD-refined (valid).
+
+        2. Diversity-aware selection (high priority):
+           When pruning and merging solutions, use farthest-point sampling or clustering in (Distance, Material) 
+           to maximize spread across the Pareto front.
+
+        3. De-duplicate (same edges & near-identical positions; or near-identical (distance, material)).
+
+        4. Select top 1000 by hypervolume contribution: greedily add points that most increase HV; 
+           removing points generally reduces HV unless redundant.
+
+Repeat A–C for each of the 6 curves. Package per the submission format.
+(Why this works: It matches the scoring mechanics (HV), obeys constraints, incorporates portfolio breadth 
+and multi-objective refinement for stronger coverage, and follows the notebooks’ guidance on seeding, 
+mixed-variable GA, and gradient-based optimization.)

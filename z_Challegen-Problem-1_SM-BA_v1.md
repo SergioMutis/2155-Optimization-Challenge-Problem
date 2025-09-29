@@ -2,31 +2,59 @@
 
 # Instructions
 
+In this challenge problem, the task is to design **2D planar linkage mechanisms** that can trace six given target curves (the “egg” paths). The optimization must balance **accuracy** (distance to target curve) and **efficiency** (total material used), while respecting complexity constraints.
 
-[IMPORTANT] In this project three constraints are set for you:
-<ul>
-    <li><b>Distance: </b>Any mechanisms output with a distance to the target curve larger than 0.75 will be considered invalid and will not be used to calculate the score of the submissions.</li>
-    <li><b>Material Use: </b>Any mechanism with total linkage lengths more than 10.0 will be deemed invalid and will not be used to calculate the score of the submissions.</li>
-    <li><b>Mechanism Complexity: </b>For this project we want you to generate mechanisms with no more than 20 joints </li>
-</ul>
+### Constraints
+Your solutions must satisfy all three of the following:
+1. **Distance Constraint**: Mechanism’s traced curve must be within **0.75** distance of the target curve.  
+2. **Material Constraint**: Total linkage length must be **≤ 10.0**.  
+3. **Complexity Constraint**: Mechanisms may have at most **20 joints**.  
 
-Submitted mechanisms that violate these constraints will not be scored.
+Mechanisms that violate these constraints will be discarded and will not count toward the score.
 
-Your performance on the targets will be measured based on the hypervolume calculated from the population with a reference point of 0.75 for distance and 10.0 for material use. Note that we limit the number of mechanisms you are permitted to submit as potential solutions for any given curve to 1000. The closer you get to ideal the higher the score you will receive. The total score for your submission will be the average hypervolume for all target curves.
+### Objective & Scoring
+- Each mechanism is evaluated on **two objectives**:  
+  - Distance to target curve (minimize).  
+  - Material usage (minimize).  
+- Performance is measured using the **hypervolume (HV)** indicator with reference point **(0.75, 10.0)**.  
+- For each target curve, you may submit up to **1000 mechanisms**.  
+- The **average hypervolume across all six target curves** determines your final score.
+
+### Optimization Methods
+You are expected to use and possibly combine the following strategies:
+- **Genetic Algorithms (GA):** Optimize both mechanism structures (edges, connectivity) and joint positions. You may experiment with:
+  - Preprocessing or filtering random mechanisms before GA.  
+  - Modified mutation and crossover operators.  
+  - Mixed-variable GA setups using connectivity matrices.  
+- **Gradient-Based Optimization (GD):** Use differentiable tools to optimize joint positions. Consider gradients of both objectives (distance and material).  
+- **Hybrid / Iterative Approaches:**  
+  - Cycle between GA and GD to refine solutions.  
+  - Compare and save improved populations incrementally (keep solutions only if they improve HV).  
+  - Explore more efficient mechanism representations to reduce parameter space.
+
+### Deliverables
+For each of the six target curves:  
+- Generate and submit up to **1000 valid mechanisms**.  
+- Ensure mechanisms are evaluated with the provided tools (`Tools`, `DifferentiableTools`).  
+- Organize results so that **hypervolumes can be calculated and compared** against baseline solutions.  
+
+Your goal is to maximize the average hypervolume score across all six problems by producing mechanisms that are both accurate and efficient under the given constraints.
+
+----------------------------------------------------------------------------------------
 
 # LOG
 
-1. Cleaned the advance notebook to be more streamed-lined (SM)  
-2. Parametriced the curve to run all optimizations by updating the curve (SM)  
-3. Added a 'Compare and Save Improved Solutions' (SM)  
+- Cleaned the advance notebook to be more streamed-lined (SM)  
+- Parametriced the curve to run all optimizations by updating the curve (SM)  
+- Added a 'Compare and Save Improved Solutions' (SM)  
    - Compares the hypervolume of the new set of solutions to the previous hypervolume, then save only if the new solutions are better for that curve. (incremental improvement)
 
 # TO-DO
 
-1. Add the complete instructions
-2. Make GD be a function of both material and distance
-3. Use GA to make mechanisms
-4. Modify GA mutations and Cross-overs
+- Make GD be a function of both material and distance
+- Use GA to make mechanisms
+- Modify GA mutations and Cross-overs
+- Batch optimization (not one by one, i'd say it would be nice if it is like slecting indexes)
 
 # Official Hints:
 - Why not do some preprocessing to random mechanisms before running GA?
@@ -36,6 +64,8 @@ Your performance on the targets will be measured based on the hypervolume calcul
 - Can you modify the GA mutations and cross-over?
 - Is there a more efficient representation of mechanisms we can use?
 - Are there smarter gradient-based optimization methods?
+
+___________________________________________________________________________________________
 
 # 1. SETUP!
 
@@ -684,4 +714,82 @@ print(score)
 ```
 
     {'Overall Score': 2.649030376061854, 'Score Breakdown': {'Problem 1': 3.2913203201667685, 'Problem 2': 1.8311033755866362, 'Problem 3': 3.1251822811640793, 'Problem 4': 3.144530341569336, 'Problem 5': 2.322355471764368, 'Problem 6': 2.1796904661199363}}
+    
+
+# Save File as Markdown
+
+
+```python
+# === Save this notebook as Markdown with the same name ===
+import os
+import nbformat
+from nbconvert import MarkdownExporter
+
+# Try to import ipynbname, install if missing
+try:
+    import ipynbname
+except ImportError:
+    import sys
+    !{sys.executable} -m pip install ipynbname
+    import ipynbname
+
+# Detect current notebook path
+try:
+    notebook_path = ipynbname.path()
+    base, _ = os.path.splitext(notebook_path)
+    output_path = base + ".md"
+
+    # Load and export
+    with open(notebook_path, "r", encoding="utf-8") as f:
+        nb = nbformat.read(f, as_version=4)
+
+    md_exporter = MarkdownExporter()
+    body, _ = md_exporter.from_notebook_node(nb)
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(body)
+
+    print(f"✅ Saved as {output_path}")
+except Exception as e:
+    print("[export skipped]", e)
+
+
+```
+
+    Collecting ipynbname
+      Downloading ipynbname-2025.8.0.0-py3-none-any.whl.metadata (2.2 kB)
+    Requirement already satisfied: ipykernel in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipynbname) (6.30.1)
+    Requirement already satisfied: comm>=0.1.1 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (0.2.3)
+    Requirement already satisfied: debugpy>=1.6.5 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (1.8.17)
+    Requirement already satisfied: ipython>=7.23.1 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (9.5.0)
+    Requirement already satisfied: jupyter-client>=8.0.0 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (8.6.3)
+    Requirement already satisfied: jupyter-core!=5.0.*,>=4.12 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (5.8.1)
+    Requirement already satisfied: matplotlib-inline>=0.1 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (0.1.7)
+    Requirement already satisfied: nest-asyncio>=1.4 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (1.6.0)
+    Requirement already satisfied: packaging>=22 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (25.0)
+    Requirement already satisfied: psutil>=5.7 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (7.1.0)
+    Requirement already satisfied: pyzmq>=25 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (27.1.0)
+    Requirement already satisfied: tornado>=6.2 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (6.5.2)
+    Requirement already satisfied: traitlets>=5.4.0 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipykernel->ipynbname) (5.14.3)
+    Requirement already satisfied: colorama in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (0.4.6)
+    Requirement already satisfied: decorator in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (5.2.1)
+    Requirement already satisfied: ipython-pygments-lexers in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (1.1.1)
+    Requirement already satisfied: jedi>=0.16 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (0.19.2)
+    Requirement already satisfied: prompt_toolkit<3.1.0,>=3.0.41 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (3.0.52)
+    Requirement already satisfied: pygments>=2.4.0 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (2.19.2)
+    Requirement already satisfied: stack_data in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (0.6.3)
+    Requirement already satisfied: typing_extensions>=4.6 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from ipython>=7.23.1->ipykernel->ipynbname) (4.15.0)
+    Requirement already satisfied: wcwidth in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from prompt_toolkit<3.1.0,>=3.0.41->ipython>=7.23.1->ipykernel->ipynbname) (0.2.14)
+    Requirement already satisfied: parso<0.9.0,>=0.8.4 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from jedi>=0.16->ipython>=7.23.1->ipykernel->ipynbname) (0.8.5)
+    Requirement already satisfied: python-dateutil>=2.8.2 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from jupyter-client>=8.0.0->ipykernel->ipynbname) (2.9.0.post0)
+    Requirement already satisfied: platformdirs>=2.5 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from jupyter-core!=5.0.*,>=4.12->ipykernel->ipynbname) (4.4.0)
+    Requirement already satisfied: pywin32>=300 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from jupyter-core!=5.0.*,>=4.12->ipykernel->ipynbname) (311)
+    Requirement already satisfied: six>=1.5 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from python-dateutil>=2.8.2->jupyter-client>=8.0.0->ipykernel->ipynbname) (1.17.0)
+    Requirement already satisfied: executing>=1.2.0 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from stack_data->ipython>=7.23.1->ipykernel->ipynbname) (2.2.1)
+    Requirement already satisfied: asttokens>=2.1.0 in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from stack_data->ipython>=7.23.1->ipykernel->ipynbname) (3.0.0)
+    Requirement already satisfied: pure-eval in c:\users\smuti\onedrive\desktop\cm_3d-pen\2155-optimization-challenge-problem\.venv\lib\site-packages (from stack_data->ipython>=7.23.1->ipykernel->ipynbname) (0.2.3)
+    Downloading ipynbname-2025.8.0.0-py3-none-any.whl (4.5 kB)
+    Installing collected packages: ipynbname
+    Successfully installed ipynbname-2025.8.0.0
+    ✅ Saved as c:\Users\smuti\OneDrive\Desktop\CM_3D-Pen\2155-Optimization-Challenge-Problem\z_Challegen-Problem-1_SM-BA_v1.md
     
