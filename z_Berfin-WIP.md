@@ -88,7 +88,62 @@ Your goal is to maximize the average hypervolume score across all six problems b
 - Is there a more efficient representation of mechanisms we can use?
 - Are there smarter gradient-based optimization methods?
 
+
 ___________________________________________________________________________________________
+
+# 0. Work In Progress
+
+Berfin: Problem 1, 2, 3  
+Sergio: Problem 4, 5, 6
+
+### Round 1 - NODE Explore
+Change NODES to 6, 7, 8 to decide best mechanism design for each curve  
+
+Other variables a low compute:  
+SEED_PER_SIZE = 100  
+TARGET_VALID  = 50   
+POP           = 50  
+N_GEN         = 50  
+GD_STEPS      = 50   
+SEEDS = [0, 1]   
+
+| Problem | NODES = 6  | NODES = 7 |NODES = 8 |
+|---------|------------|-----------|----------|
+| 1       |            |           |          |
+| 2       |            |           |          |
+| 3       |            |           |          |
+| 4       |    3.67    |           |          |
+| 5       |            |           |          |
+| 6       |            |           |          |
+
+### Round 2 - Deep Dive
+Fixed NODE to decide best mechanism design for each curve   
+
+Other variables a low compute:  
+SEED_PER_SIZE = 2000  
+TARGET_VALID  = 200   
+POP           = 200  
+N_GEN         = 200  
+GD_STEPS      = 200   
+SEEDS = [0, 1, 2, 3, 4, 5, 6, 7, 11, 13]  
+
+| Problem |  hypervalue  |  
+|---------|--------------| 
+| 1       |              |
+| 2       |              |
+| 3       |              |
+| 4       |              |
+| 5       |              |
+| 6       |              |
+
+
+### Extras
+
+* Extensions  
+* Clean File (for submission)  
+* Reflection Document  
+* Submit File  
+
 
 # 1. Setup & Global Config
 
@@ -96,24 +151,24 @@ a. Target Optimization Curve + Variables to Change
 
 ```python
 # --- Configurable target curve ---
-Problem_to_solve = 4# 1-6 # ★★★★★★★★ originally 180 ★★★★★★★★★★
+Problem_to_solve = 4 # 1-6 # ★★★★★★★★ originally 180 ★★★★★★★★★★
 
 
 
 # --- Mechanism size / encoding ---
-NODES = 7                       # must match initial pool generator and problem(N=NODES)
+NODES = 6                       # must match initial pool generator and problem(N=NODES)
 
 # === Seeding (Section 2) ===
-SEED_PER_SIZE = 2000      # ★★★★★★★★ generate_pool_single_size(..., per_size=SEED_PER_SIZE) // originally 200 ★★★★★★★★★★
-TARGET_VALID  = 100      # ★★★★★★★★ stop once this many feasible seeds found // originally 150 ★★★★★★★★★★
+SEED_PER_SIZE = 200      # ★★★★★★★★ generate_pool_single_size(..., per_size=SEED_PER_SIZE) // originally 200 ★★★★★★★★★★
+TARGET_VALID  = 50      # ★★★★★★★★ stop once this many feasible seeds found // originally 150 ★★★★★★★★★★
 
 # === GA config (Section 3) ===
-POP      = 200 # ★★★★★★★★ originally 150 ★★★★★★★★★★
-N_GEN    = 150 # ★★★★★★★★ originally 150 ★★★★★★★★★★
+POP      = 50 # ★★★★★★★★ originally 150 ★★★★★★★★★★
+N_GEN    = 50 # ★★★★★★★★ originally 150 ★★★★★★★★★★
 MUT_PROB = 0.90 # originally 080
-SEEDS = [0, 1, 2, 3, 4] # ★★★★★★★★ originally [0, 1, 2, 3, 4, 5, 6, 7, 11, 13] ★★★★★★★★★★
+SEEDS = [0, 1] # ★★★★★★★★ originally [0, 1, 2, 3, 4, 5, 6, 7, 11, 13] ★★★★★★★★★★
 
-# Optional GA knobs
+# Optional GA knobs 
 CROSSOVER_PROB = 1.0            # SBX default behavior in pymoo often uses mating config
 CROSSOVER_ETA  = 15             # SBX “spread” (bigger => offspring closer to parents)
 MUTATION_ETA   = 20             # PM “spread”  (bigger => smaller perturbations)
@@ -121,7 +176,7 @@ MUTATION_ETA   = 20             # PM “spread”  (bigger => smaller perturbati
 # === GD refinement (section 4) ===
 RUN_GD     = True
 GD_TOPK    = 10       # take best-K GA designs into GD
-GD_STEPS   = 200      # ★★★★★★★★★★ iterations original 100 ★★★★★★★★★★
+GD_STEPS   = 50      # ★★★★★★★★★★ iterations original 100 ★★★★★★★★★★
 GD_STEP    = 3e-4    # base step size
 GD_W_DIST  = 0.7     # weight on distance gradient
 GD_W_MAT   = 0.3     # weight on material gradient (scaled by /10 in code)
@@ -195,7 +250,7 @@ for i in range(6):
 
 
     
-![png](output_9_0.png)
+![png](output_10_0.png)
     
 
 
@@ -521,19 +576,19 @@ initial_population = X_dicts  # may be empty; GA sampler will handle both cases
 ```
 
 
-    Sampling mechanisms n=7:   0%|          | 0/2000 [00:00<?, ?it/s]
+    Sampling mechanisms n=6:   0%|          | 0/200 [00:00<?, ?it/s]
 
 
-    [seed] sampled 2000 candidates at n=7 in 93.2s
+    [seed] sampled 200 candidates at n=6 in 8.7s
     
 
 
-    [eval] checking constraints:   0%|          | 0/2000 [00:00<?, ?it/s]
+    [eval] checking constraints:   0%|          | 0/200 [00:00<?, ?it/s]
 
 
-    [eval] done in 7.8s | valid=14 (0.7%)
-    [eval] valid F ranges: distance [0.374, 0.738] | material [4.826, 9.572] | ref=(np.float64(0.75), np.float64(10.0))
-    [eval] size distribution among valid: n=7:14
+    [eval] done in 3.1s | valid=3 (1.5%)
+    [eval] valid F ranges: distance [0.270, 0.443] | material [5.724, 9.533] | ref=(np.float64(0.75), np.float64(10.0))
+    [eval] size distribution among valid: n=6:3
     
 
 c. Select Initial Population
@@ -554,9 +609,9 @@ print(f"[seed] → init pop size: {len(initial_population)}")
 
 ```
 
-    [seed selection] non-dominated front size: 4
-    [seed selection] selected all 4 (<= k=100)
-    [seed] → init pop size: 4
+    [seed selection] non-dominated front size: 1
+    [seed selection] selected all 1 (<= k=100)
+    [seed] → init pop size: 1
     
 
 # 3. GA Optimization
@@ -623,156 +678,56 @@ results = minimize(
     ==========================================================================================
     n_gen  |  n_eval  | n_nds  |     cv_min    |     cv_avg    |      eps      |   indicator  
     ==========================================================================================
-         1 |      200 |    200 |  0.000000E+00 |  0.000000E+00 |             - |             -
-         2 |      400 |     55 |  0.000000E+00 |  0.000000E+00 |  0.0203971586 |         ideal
-         3 |      600 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0322136536 |         ideal
-         4 |      800 |      6 |  0.000000E+00 |  0.000000E+00 |  0.0218000524 |             f
-         5 |     1000 |      6 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-         6 |     1200 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0211040522 |             f
-         7 |     1400 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0191489778 |         ideal
-         8 |     1600 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0092809716 |             f
-         9 |     1800 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0406015394 |         ideal
-        10 |     2000 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0050381108 |             f
-        11 |     2200 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0060763050 |             f
-        12 |     2400 |     14 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        13 |     2600 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0195759345 |             f
-        14 |     2800 |      9 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        15 |     3000 |      9 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        16 |     3200 |      9 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        17 |     3400 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0263957942 |             f
-        18 |     3600 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0043588045 |             f
-        19 |     3800 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        20 |     4000 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        21 |     4200 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        22 |     4400 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0006793195 |             f
-        23 |     4600 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0006793195 |             f
-        24 |     4800 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0162624143 |             f
-        25 |     5000 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        26 |     5200 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        27 |     5400 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        28 |     5600 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        29 |     5800 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0108744871 |             f
-        30 |     6000 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0086765277 |             f
-        31 |     6200 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        32 |     6400 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        33 |     6600 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0080046103 |         ideal
-        34 |     6800 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0807285792 |         ideal
-        35 |     7000 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        36 |     7200 |     14 |  0.000000E+00 |  0.000000E+00 |  2.316895E-07 |             f
-        37 |     7400 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0046176203 |             f
-        38 |     7600 |     14 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        39 |     7800 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0014759561 |             f
-        40 |     8000 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0014759561 |             f
-        41 |     8200 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0060264589 |             f
-        42 |     8400 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        43 |     8600 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        44 |     8800 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0089923934 |             f
-        45 |     9000 |     14 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        46 |     9200 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0045416644 |             f
-        47 |     9400 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0074051461 |             f
-        48 |     9600 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0087769159 |             f
-        49 |     9800 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0477770675 |         ideal
-        50 |    10000 |     14 |  0.000000E+00 |  0.000000E+00 |  0.1247470118 |         ideal
-        51 |    10200 |     14 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        52 |    10400 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0032336847 |             f
-        53 |    10600 |     11 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        54 |    10800 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0079554489 |             f
-        55 |    11000 |     11 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        56 |    11200 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0277497061 |             f
-        57 |    11400 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0325058338 |             f
-        58 |    11600 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0003986779 |             f
-        59 |    11800 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0003986779 |             f
-        60 |    12000 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0003986779 |             f
-        61 |    12200 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0003986779 |             f
-        62 |    12400 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0003986779 |             f
-        63 |    12600 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0003986779 |             f
-        64 |    12800 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0003986779 |             f
-        65 |    13000 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0219604271 |             f
-        66 |    13200 |      7 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        67 |    13400 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0104515924 |         ideal
-        68 |    13600 |      8 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        69 |    13800 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0220549718 |             f
-        70 |    14000 |     10 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        71 |    14200 |     10 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        72 |    14400 |     10 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        73 |    14600 |     10 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        74 |    14800 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0080947651 |         ideal
-        75 |    15000 |      6 |  0.000000E+00 |  0.000000E+00 |  0.0206711672 |         ideal
-        76 |    15200 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0359820499 |             f
-        77 |    15400 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0142166261 |             f
-        78 |    15600 |      7 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        79 |    15800 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0032376379 |             f
-        80 |    16000 |      7 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        81 |    16200 |      7 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        82 |    16400 |      7 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        83 |    16600 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0193639388 |         ideal
-        84 |    16800 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0067077303 |             f
-        85 |    17000 |      9 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        86 |    17200 |      9 |  0.000000E+00 |  0.000000E+00 |  0.1008731618 |         nadir
-        87 |    17400 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0027955829 |         ideal
-        88 |    17600 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0078802917 |             f
-        89 |    17800 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0074915737 |         ideal
-        90 |    18000 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0167507262 |             f
-        91 |    18200 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0070191029 |         ideal
-        92 |    18400 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0057611423 |             f
-        93 |    18600 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0037283092 |             f
-        94 |    18800 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0102796958 |             f
-        95 |    19000 |      9 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        96 |    19200 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0113870297 |         ideal
-        97 |    19400 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0393246961 |         ideal
-        98 |    19600 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0173432699 |         ideal
-        99 |    19800 |     11 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-       100 |    20000 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0229524839 |             f
-       101 |    20200 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0038838455 |             f
-       102 |    20400 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0161606702 |             f
-       103 |    20600 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0188692569 |         nadir
-       104 |    20800 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0077088803 |             f
-       105 |    21000 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0099222781 |         ideal
-       106 |    21200 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0045530041 |             f
-       107 |    21400 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0592081034 |         nadir
-       108 |    21600 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0128590712 |             f
-       109 |    21800 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0233671335 |         ideal
-       110 |    22000 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0182580304 |             f
-       111 |    22200 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0083755646 |         ideal
-       112 |    22400 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0078724689 |             f
-       113 |    22600 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0184268069 |             f
-       114 |    22800 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0192321400 |         ideal
-       115 |    23000 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0073667689 |             f
-       116 |    23200 |     14 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-       117 |    23400 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0051722150 |             f
-       118 |    23600 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0039963804 |             f
-       119 |    23800 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-       120 |    24000 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0137944358 |         ideal
-       121 |    24200 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0033911248 |         ideal
-       122 |    24400 |     14 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-       123 |    24600 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0122227489 |             f
-       124 |    24800 |     17 |  0.000000E+00 |  0.000000E+00 |  0.0451353097 |         nadir
-       125 |    25000 |     17 |  0.000000E+00 |  0.000000E+00 |  0.0227134596 |         ideal
-       126 |    25200 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0118805543 |             f
-       127 |    25400 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0438210462 |             f
-       128 |    25600 |     11 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-       129 |    25800 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0555828219 |         ideal
-       130 |    26000 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0041560280 |             f
-       131 |    26200 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0973400279 |         ideal
-       132 |    26400 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0023504557 |             f
-       133 |    26600 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0050322522 |         ideal
-       134 |    26800 |     10 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-       135 |    27000 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0093441745 |             f
-       136 |    27200 |      9 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-       137 |    27400 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0292563058 |             f
-       138 |    27600 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0199486828 |         ideal
-       139 |    27800 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0225131949 |         ideal
-       140 |    28000 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0067159618 |             f
-       141 |    28200 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0646224523 |         ideal
-       142 |    28400 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0097458299 |             f
-       143 |    28600 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0053827101 |             f
-       144 |    28800 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0696476536 |         ideal
-       145 |    29000 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0043942765 |             f
-       146 |    29200 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0029952130 |             f
-       147 |    29400 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0177005857 |             f
-       148 |    29600 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0644594785 |         ideal
-       149 |    29800 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0047138092 |             f
-       150 |    30000 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0003270737 |             f
+         1 |       50 |     50 |  0.000000E+00 |  0.000000E+00 |             - |             -
+         2 |      100 |      2 |  0.000000E+00 |  0.000000E+00 |  1.2053473161 |         ideal
+         3 |      150 |      3 |  0.000000E+00 |  0.000000E+00 |  0.9400190746 |         ideal
+         4 |      200 |      4 |  0.000000E+00 |  0.000000E+00 |  0.0604193796 |             f
+         5 |      250 |      4 |  0.000000E+00 |  0.000000E+00 |  0.0139694733 |             f
+         6 |      300 |      4 |  0.000000E+00 |  0.000000E+00 |  0.0173758893 |             f
+         7 |      350 |      4 |  0.000000E+00 |  0.000000E+00 |  0.0044509437 |             f
+         8 |      400 |      3 |  0.000000E+00 |  0.000000E+00 |  0.2278375880 |         ideal
+         9 |      450 |      5 |  0.000000E+00 |  0.000000E+00 |  0.1191009865 |             f
+        10 |      500 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0288310928 |             f
+        11 |      550 |      6 |  0.000000E+00 |  0.000000E+00 |  0.4104424544 |         ideal
+        12 |      600 |      6 |  0.000000E+00 |  0.000000E+00 |  0.0580872472 |             f
+        13 |      650 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0001303782 |             f
+        14 |      700 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0826194496 |             f
+        15 |      750 |      8 |  0.000000E+00 |  0.000000E+00 |  0.1590063715 |         ideal
+        16 |      800 |      8 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        17 |      850 |      8 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        18 |      900 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0035136857 |             f
+        19 |      950 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0047451363 |             f
+        20 |     1000 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0090086926 |             f
+        21 |     1050 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0093299785 |             f
+        22 |     1100 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0706596072 |         ideal
+        23 |     1150 |     17 |  0.000000E+00 |  0.000000E+00 |  0.0061380254 |             f
+        24 |     1200 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0062554451 |             f
+        25 |     1250 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0011821603 |             f
+        26 |     1300 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0139404196 |             f
+        27 |     1350 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0109812962 |             f
+        28 |     1400 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0268302578 |         ideal
+        29 |     1450 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0889615003 |         nadir
+        30 |     1500 |     10 |  0.000000E+00 |  0.000000E+00 |  0.2742073603 |         ideal
+        31 |     1550 |     10 |  0.000000E+00 |  0.000000E+00 |  0.2902701379 |         nadir
+        32 |     1600 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0270005323 |             f
+        33 |     1650 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0087474838 |             f
+        34 |     1700 |     12 |  0.000000E+00 |  0.000000E+00 |  0.1974976401 |         ideal
+        35 |     1750 |      6 |  0.000000E+00 |  0.000000E+00 |  0.0418265507 |             f
+        36 |     1800 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0015901412 |             f
+        37 |     1850 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0136587980 |             f
+        38 |     1900 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0247917780 |             f
+        39 |     1950 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0197430268 |         ideal
+        40 |     2000 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0341526120 |             f
+        41 |     2050 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0075973488 |             f
+        42 |     2100 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0213302509 |         ideal
+        43 |     2150 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0037809541 |             f
+        44 |     2200 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0075608839 |             f
+        45 |     2250 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0079910804 |             f
+        46 |     2300 |      8 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        47 |     2350 |      8 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        48 |     2400 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0019329585 |             f
+        49 |     2450 |      6 |  0.000000E+00 |  0.000000E+00 |  0.0280160578 |             f
+        50 |     2500 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0086811051 |             f
     
 
 d. Hypervolume Check
@@ -801,12 +756,12 @@ else:
     print('Did Not Find Solutions!!')
 ```
 
-    Hyper Volume ~ 3.206937
+    Hyper Volume ~ 3.485357
     
 
 
     
-![png](output_26_1.png)
+![png](output_27_1.png)
     
 
 
@@ -961,21 +916,18 @@ print(f"[multi-seed] union Pareto size: {len(UNION_MECHS)}")
 
 ```
 
-    [3.e] seed 0: 15 pts
-    [3.e] seed 1: 21 pts
-    [3.e] seed 2: 20 pts
-    [3.e] seed 3: 10 pts
-    [3.e] seed 4: 9 pts
+    [3.e] seed 0: 9 pts
+    [3.e] seed 1: 7 pts
     
 
 
     
-![png](output_29_1.png)
+![png](output_30_1.png)
     
 
 
-    Union HV @ ref(0.75,10.0): 3.424194
-    [multi-seed] union Pareto size: 16
+    Union HV @ ref(0.75,10.0): 3.693594
+    [multi-seed] union Pareto size: 7
     
 
 3E sanity check
@@ -1063,17 +1015,14 @@ else:
 
 ```
 
-    Union HV @ ref [0.75, 10.0]: 3.424194  (45.7% of max 7.500)
-    Union Pareto size: 16
-    Feasible-only HV: 3.424194  (45.7%)
-    Feasible on union front: 16/16
+    Union HV @ ref [0.75, 10.0]: 3.693594  (49.2% of max 7.500)
+    Union Pareto size: 7
+    Feasible-only HV: 3.693594  (49.2%)
+    Feasible on union front: 7/7
     
     Per-seed stats:
-      Seed 0:  15/ 15 feasible, HV=2.684485, contributes 0 union pts
-      Seed 1:  21/ 21 feasible, HV=3.108100, contributes 3 union pts
-      Seed 2:  20/ 20 feasible, HV=3.139041, contributes 4 union pts
-      Seed 3:  10/ 10 feasible, HV=3.350449, contributes 9 union pts
-      Seed 4:   9/  9 feasible, HV=2.639043, contributes 0 union pts
+      Seed 0:   9/  9 feasible, HV=3.692621, contributes 4 union pts
+      Seed 1:   7/  7 feasible, HV=3.183610, contributes 3 union pts
     
 
 # 4. GD Optimization
@@ -1278,7 +1227,7 @@ else:
 ```
 
     [GD] Building batch from UNION_MECHS…
-    [GD] Start HV: 3.339847  | step=1.00e-02  (w_dist=0.7, w_mat=0.3)
+    [GD] Start HV: 3.693594  | step=1.00e-02  (w_dist=0.7, w_mat=0.3)
     
 
 
@@ -1286,46 +1235,37 @@ else:
 
 
     [GD] DIFF gradients unavailable; using numeric finite differences (reason: too many indices for array: array is 1-dimensional, but 2 were indexed)
+    [GD] it=   1/100  HV=3.578670  best=3.693594  step=1.00e-02
+    [GD] it=   5/100  HV=3.579211  best=3.693594  step=1.00e-02
     
 
-    C:\Users\smuti\AppData\Local\Temp\ipykernel_38216\1292629569.py:152: RuntimeWarning: invalid value encountered in divide
-      g /= (np.linalg.norm(g) + 1e-12)
-    C:\Users\smuti\AppData\Local\Temp\ipykernel_38216\1292629569.py:45: RuntimeWarning: invalid value encountered in scalar subtract
+    C:\Users\smuti\AppData\Local\Temp\ipykernel_24080\1292629569.py:45: RuntimeWarning: invalid value encountered in scalar subtract
       gd_flat[k] = (d1 - d0) / hk
     
 
-    [GD] it=   1/100  HV=2.476472  best=3.339847  step=1.00e-02
-    [GD] it=   5/100  HV=1.290345  best=3.339847  step=1.00e-02
     [GD] patience hit → decreasing step: 1.00e-02 → 5.00e-03
-    [GD] it=  10/100  HV=0.000000  best=3.339847  step=5.00e-03
-    [GD] it=  15/100  HV=0.000000  best=3.339847  step=5.00e-03
+    [GD] it=  10/100  HV=3.117754  best=3.693594  step=5.00e-03
+    [GD] it=  15/100  HV=3.687007  best=3.693594  step=5.00e-03
+    [GD] it=  20/100  HV=3.378832  best=3.695260  step=5.00e-03
+    [GD] it=  25/100  HV=3.696691  best=3.696691  step=5.00e-03
+    [GD] it=  30/100  HV=3.403473  best=3.697624  step=5.00e-03
+    [GD] it=  35/100  HV=3.698979  best=3.698979  step=5.00e-03
+    [GD] it=  40/100  HV=3.417783  best=3.699863  step=5.00e-03
+    [GD] it=  45/100  HV=3.701134  best=3.701134  step=5.00e-03
+    [GD] it=  50/100  HV=3.430065  best=3.701706  step=5.00e-03
+    [GD] it=  55/100  HV=3.701663  best=3.701840  step=5.00e-03
+    [GD] it=  60/100  HV=3.682034  best=3.701840  step=5.00e-03
     [GD] patience hit → decreasing step: 5.00e-03 → 2.50e-03
-    [GD] it=  20/100  HV=0.000000  best=3.339847  step=2.50e-03
-    [GD] it=  25/100  HV=0.000000  best=3.339847  step=2.50e-03
+    [GD] it=  65/100  HV=3.674873  best=3.723561  step=2.50e-03
+    [GD] it=  70/100  HV=3.667310  best=3.723561  step=2.50e-03
     [GD] patience hit → decreasing step: 2.50e-03 → 1.25e-03
-    [GD] it=  30/100  HV=0.000000  best=3.339847  step=1.25e-03
-    [GD] it=  35/100  HV=0.000000  best=3.339847  step=1.25e-03
-    [GD] patience hit → decreasing step: 1.25e-03 → 6.25e-04
-    [GD] it=  40/100  HV=0.000000  best=3.339847  step=6.25e-04
-    [GD] it=  45/100  HV=0.000000  best=3.339847  step=6.25e-04
-    [GD] patience hit → decreasing step: 6.25e-04 → 3.13e-04
-    [GD] it=  50/100  HV=0.000000  best=3.339847  step=3.13e-04
-    [GD] it=  55/100  HV=0.000000  best=3.339847  step=3.13e-04
-    [GD] patience hit → decreasing step: 3.13e-04 → 1.56e-04
-    [GD] it=  60/100  HV=0.000000  best=3.339847  step=1.56e-04
-    [GD] it=  65/100  HV=0.000000  best=3.339847  step=1.56e-04
-    [GD] patience hit → decreasing step: 1.56e-04 → 7.81e-05
-    [GD] it=  70/100  HV=0.000000  best=3.339847  step=7.81e-05
-    [GD] it=  75/100  HV=0.000000  best=3.339847  step=7.81e-05
-    [GD] patience hit → decreasing step: 7.81e-05 → 3.91e-05
-    [GD] it=  80/100  HV=0.000000  best=3.339847  step=3.91e-05
-    [GD] it=  85/100  HV=0.000000  best=3.339847  step=3.91e-05
-    [GD] patience hit → decreasing step: 3.91e-05 → 1.95e-05
-    [GD] it=  90/100  HV=0.000000  best=3.339847  step=1.95e-05
-    [GD] it=  95/100  HV=0.000000  best=3.339847  step=1.95e-05
-    [GD] patience hit → decreasing step: 1.95e-05 → 9.77e-06
-    [GD] it= 100/100  HV=0.000000  best=3.339847  step=9.77e-06
-    [GD] Done. Best HV: 3.339847 | Final HV (best set): 3.339847 | K=10
+    [GD] it=  75/100  HV=3.724362  best=3.724460  step=1.25e-03
+    [GD] it=  80/100  HV=3.712892  best=3.724822  step=1.25e-03
+    [GD] it=  85/100  HV=3.725828  best=3.725828  step=1.25e-03
+    [GD] it=  90/100  HV=3.717861  best=3.726536  step=1.25e-03
+    [GD] it=  95/100  HV=3.727675  best=3.727675  step=1.25e-03
+    [GD] it= 100/100  HV=3.721904  best=3.728518  step=1.25e-03
+    [GD] Done. Best HV: 3.728518 | Final HV (best set): 3.728518 | K=7
     
 
 # 5. Compare and Save Improved Solutions (per curve)
@@ -1495,23 +1435,24 @@ if cand_score > saved_score + 1e-12:
 
     # persist
     saved[key] = merged
-    np.save("my_submission.npy", saved, allow_pickle=True)
-    print("[step5] Saved my_submission.npy ✓")
+    np.save("my_submission_Berfin.npy", saved, allow_pickle=True)
+    print("[step5] Saved my_submission_Berfin.npy ✓")
 else:
     print("[step5] Not saving; candidate didn’t beat current.")
 
 ```
 
-    [step5-prep] Taking 16 from UNION_MECHS
-    [step5-prep] Also adding 10 GD-refined designs
-    [step5-prep] After sanitize+dedup: 3 candidates
-    [step5] sanitized: feasible 3/3 (will send only feasible to scorer)
-      idx=  0  d=0.2914  m=4.2802  finite=True  feasible=True
-      idx=  1  d=0.2905  m=5.5537  finite=True  feasible=True
-      idx=  2  d=0.3010  m=3.5138  finite=True  feasible=True
-    [step5] Scoring 3 candidate(s) for Problem 5
-    Saved score for Problem 5:     3.013802
-    Candidate (union) score:   2.971041
+    [step5-prep] Taking 7 from UNION_MECHS
+    [step5-prep] Also adding 7 GD-refined designs
+    [step5-prep] After sanitize+dedup: 4 candidates
+    [step5] sanitized: feasible 4/4 (will send only feasible to scorer)
+      idx=  0  d=0.2642  m=2.4485  finite=True  feasible=True
+      idx=  1  d=0.2640  m=3.3147  finite=True  feasible=True
+      idx=  2  d=0.2638  m=4.6646  finite=True  feasible=True
+      idx=  3  d=0.2640  m=4.4074  finite=True  feasible=True
+    [step5] Scoring 4 candidate(s) for Problem 4
+    Saved score for Problem 4:     4.387216
+    Candidate (union) score:   3.671098
     Will update: False
     [step5] Not saving; candidate didn’t beat current.
     
@@ -1523,7 +1464,7 @@ import numpy as np
 from LINKS.CP import evaluate_submission
 
 # Load your submission (dict saved with np.save earlier)
-submission = np.load("my_submission.npy", allow_pickle=True).item()
+submission = np.load("my_submission_Berfin.npy", allow_pickle=True).item()
 
 # Evaluate and print scores
 score = evaluate_submission(submission)
@@ -1531,7 +1472,7 @@ print(score)
 
 ```
 
-    {'Overall Score': 3.4236018867640143, 'Score Breakdown': {'Problem 1': 4.9951039703176825, 'Problem 2': 2.9328630015500465, 'Problem 3': 3.1251822811640793, 'Problem 4': 3.651364129841369, 'Problem 5': 3.0138020538229, 'Problem 6': 2.823295883888008}}
+    {'Overall Score': 3.5462439157067944, 'Score Breakdown': {'Problem 1': 4.9951039703176825, 'Problem 2': 2.9328630015500465, 'Problem 3': 3.1251822811640793, 'Problem 4': 4.38721630349805, 'Problem 5': 3.0138020538229, 'Problem 6': 2.823295883888008}}
     
 
 ### 5.c. Extra: Save File as Markdown
@@ -1595,11 +1536,11 @@ except Exception as e:
 ```
 
     ✅ Exported
-      Source: c:\Users\smuti\OneDrive\Desktop\CM_3D-Pen\2155-Optimization-Challenge-Problem\z_Challegen-Problem-1_SM-BA_v5.ipynb
-      Saved:  c:\Users\smuti\OneDrive\Desktop\CM_3D-Pen\2155-Optimization-Challenge-Problem\z_Challegen-Problem-1_SM-BA_v5.md
-      Assets: c:\Users\smuti\OneDrive\Desktop\CM_3D-Pen\2155-Optimization-Challenge-Problem\z_Challegen-Problem-1_SM-BA_v5_files (3 files)
-      Cells:  42
-      Note: export reflects on-disk content last saved at 2025-10-01 09:30:17. Save notebook first.
+      Source: c:\Users\smuti\OneDrive\Desktop\CM_3D-Pen\2155-Optimization-Challenge-Problem\z_Sergio-WIP.ipynb
+      Saved:  c:\Users\smuti\OneDrive\Desktop\CM_3D-Pen\2155-Optimization-Challenge-Problem\z_Sergio-WIP.md
+      Assets: c:\Users\smuti\OneDrive\Desktop\CM_3D-Pen\2155-Optimization-Challenge-Problem\z_Sergio-WIP_files (3 files)
+      Cells:  43
+      Note: export reflects on-disk content last saved at 2025-10-01 18:42:56. Save notebook first.
     
 
 code: ready to rumble?
