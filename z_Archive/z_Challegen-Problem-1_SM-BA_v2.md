@@ -97,7 +97,7 @@ Target Optimization Curve
 
 ```python
 # --- Configurable target curve ---
-curve_index = 0   # 0-based index: 0 = Problem 1, 1 = Problem 2, ..., 5 = Problem 6
+curve_index = 2   # 0-based index: 0 = Problem 1, 1 = Problem 2, ..., 5 = Problem 6
 ```
 
 a. Environment Setup
@@ -113,8 +113,26 @@ import random
 from tqdm.auto import tqdm, trange
 
 # deteministic random numbers
-np.random.seed(0)
-random.seed(0)
+# np.random.seed(0)
+# random.seed(0)
+
+import matplotlib as mpl
+plt.style.use('default')  # reset any dark style
+mpl.rcParams.update({
+    "figure.facecolor":  "white",
+    "axes.facecolor":    "white",
+    "savefig.facecolor": "white",
+    "savefig.edgecolor": "white",
+})
+```
+
+
+```python
+# --- switches to control heavy steps ---
+RUN_GD   = False   # set True only when you actually want to run GD
+GD_TOPK  = 8       # refine only the top-K GA designs
+GD_STEPS = 150     # small number; increase later if needed
+
 ```
 
 b. Load Tarject Cruves
@@ -148,7 +166,7 @@ for i in range(6):
 
 
     
-![png](output_9_0.png)
+![png](output_10_0.png)
     
 
 
@@ -161,7 +179,7 @@ from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.core.variable import Real, Integer, Choice, Binary
 from pymoo.core.mixed import MixedVariableMating, MixedVariableGA, MixedVariableSampling, MixedVariableDuplicateElimination
 from pymoo.algorithms.moo.nsga2 import NSGA2
-from pymoo.operators.sampling.rnd import FloatRandomSampling, Sampling
+from pymoo.core.sampling import Sampling
 from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.mutation.pm import PolynomialMutation
 from pymoo.optimize import minimize
@@ -455,24 +473,34 @@ X_dicts, F, valid_mechs = evaluate_mechs(
     max_joints=20,
     target_valid=120     # early-stop once we have enough good seeds
 )
+# --- Seed safety: ensure initial_population exists ---
+from pymoo.core.mixed import MixedVariableSampling
 
+if 'initial_population' not in globals() or len(initial_population) == 0:
+    # Try to build some random seeds if filtering found none
+    n_fallback =  max(20, globals().get('POP', 60)//3)
+    initial_population = MixedVariableSampling().do(problem, n_fallback)
+    print(f"[fallback] Built {len(initial_population)} random seeds because initial_population was empty.")
+else:
+    print(f"[seed] Using {len(initial_population)} seeded designs.")
 ```
 
 
     Sampling mechanisms n=7:   0%|          | 0/200 [00:00<?, ?it/s]
 
 
-    [seed] sampled 200 candidates at n=7 in 11.6s
-    
+    [seed] sampled 200 candidates at n=7 in 3.5s
+
 
 
     [eval] checking constraints:   0%|          | 0/200 [00:00<?, ?it/s]
 
 
-    [eval] done in 1.2s | valid=1 (0.5%)
-    [eval] valid F ranges: distance [0.587, 0.587] | material [5.386, 5.386] | ref=(np.float64(0.75), np.float64(10.0))
-    [eval] size distribution among valid: n=7:1
-    
+    [eval] done in 1.2s | valid=3 (1.5%)
+    [eval] valid F ranges: distance [0.395, 0.454] | material [8.651, 9.875] | ref=(np.float64(0.75), np.float64(10.0))
+    [eval] size distribution among valid: n=7:3
+    [fallback] Built 20 random seeds because initial_population was empty.
+
 
 c. Select initial population
 
@@ -493,10 +521,18 @@ print(f"[seed] → init pop size: {len(initial_population)}")
 
 ```
 
-    [seed selection] non-dominated front size: 1
-    [seed selection] selected all 1 (<= k=100)
-    [seed] → init pop size: 1
     
+    Compiled modules for significant speedup can not be used!
+    https://pymoo.org/installation.html#installation
+    
+    To disable this warning:
+    from pymoo.config import Config
+    Config.warnings['not_compiled'] = False
+    
+    [seed selection] non-dominated front size: 3
+    [seed selection] selected all 3 (<= k=100)
+    [seed] → init pop size: 3
+
 
 # 3. GA Optimization
 
@@ -504,156 +540,253 @@ b. GA Optimization Setup
 
 
 ```python
-# === GA Optimization Setup (using seeded initial_population) ===
-# expects: `problem` already defined and `initial_population` from Section 2
+# === 3.b — GA sampling helper (robust to empty seeds) ===
+import numpy as np
+from pymoo.core.sampling import Sampling
+from pymoo.core.mixed import MixedVariableSampling
 
-try:
-    seeded = initial_population  # from Section 2
-except NameError:
-    # Fallback: build from prior `mechanisms` if Section 2 wasn't run
-    seeded = [problem.convert_mech_to_1D(**mech) for mech in mechanisms]
-    print("[warn] Using fallback seeds from `mechanisms` (run Section 2 for better seeds).")
-
-if len(seeded) == 0:
-    raise ValueError("No seeds available. Ensure Section 2 created a non-empty `initial_population`.")
+# If Section 2 gave us seeds, use them; else fall back to random mixed sampling
+seeded = initial_population if ('initial_population' in globals() and len(initial_population) > 0) else []
 
 class sample_from_seeds(Sampling):
     def _do(self, problem, n_samples, **kwargs):
-        return np.array([seeded[i % len(seeded)] for i in range(n_samples)], dtype=object)
+        n = int(n_samples)
+        if len(seeded) > 0:
+            print(f"[3.b] Using seeded sampling; n_seeds={len(seeded)}")
+            return np.array([seeded[i % len(seeded)] for i in range(n)], dtype=object)
+        else:
+            print("[3.b] Using random sampling; n_seeds=0")
+            return MixedVariableSampling().do(problem, n)
 
-F = problem.evaluate(np.array(seeded, dtype=object))[0]
-print(f"[seed] count={len(seeded)} | "
-      f"dist[min/mean]={F[:,0].min():.3f}/{F[:,0].mean():.3f} | "
-      f"mat[min/mean]={F[:,1].min():.3f}/{F[:,1].mean():.3f}")
+# Optional: quick seed quality print (only if we actually have seeds)
+if len(seeded) > 0:
+    F_seed = problem.evaluate(np.array(seeded, dtype=object))[0]
+    print(f"[seed] count={len(seeded)} | "
+          f"dist[min/mean]={F_seed[:,0].min():.3f}/{F_seed[:,0].mean():.3f} | "
+          f"mat[min/mean]={F_seed[:,1].min():.3f}/{F_seed[:,1].mean():.3f}")
 
 ```
 
-    [seed] count=1 | dist[min/mean]=0.587/0.587 | mat[min/mean]=5.386/5.386
-    
+    [seed] count=3 | dist[min/mean]=0.395/0.421 | mat[min/mean]=8.651/9.089
+
+
+
+```python
+# === 3 — GA config ===
+POP      = 150
+N_GEN    = 150
+MUT_PROB = 0.90
+
+# Only needed later for 3.e multi-seed restarts:
+SEEDS = [0, 1, 2, 3, 4, 5, 6, 7, 11, 13]
+
+print("POP:", POP, "N_GEN:", N_GEN, "MUT_PROB:", MUT_PROB, "SEEDS:", SEEDS)
+
+```
+
+    POP: 150 N_GEN: 150 MUT_PROB: 0.9 SEEDS: [0, 1, 2, 3, 4, 5, 6, 7, 11, 13]
+
+
+
+```python
+
+```
 
 c. GA Optimization
 
 
 ```python
-algorithm = NSGA2(pop_size=100,
-                  sampling=sample_from_seeds(),
-                  mating=MixedVariableMating(eliminate_duplicates=MixedVariableDuplicateElimination()),
-                  mutation=PolynomialMutation(prob=0.5),
-                  eliminate_duplicates=MixedVariableDuplicateElimination())
+# === 3.c — GA run (mixed-variable safe) ===
+import numpy as np
+from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.core.mixed import MixedVariableMating, MixedVariableDuplicateElimination
+from pymoo.operators.mutation.pm import PolynomialMutation
+from pymoo.optimize import minimize
 
-results = minimize(problem,
-                algorithm,
-                ('n_gen', 100),
-                verbose=True,
-                save_history=True,
-                seed=123
-                )
+deduper = MixedVariableDuplicateElimination()
+
+algorithm = NSGA2(
+    pop_size=100,
+    sampling=sample_from_seeds(),
+    mating=MixedVariableMating(eliminate_duplicates=MixedVariableDuplicateElimination()),
+    mutation=PolynomialMutation(prob=MUT_PROB),
+    eliminate_duplicates=False                                 
+)
+# Optional sanity check: these must NOT be bool
+print("[debug] mating deduper:", type(algorithm.mating.eliminate_duplicates))
+print("[debug] algo deduper:  ", type(algorithm.eliminate_duplicates))
+
+results = minimize(
+    problem,
+    algorithm,
+    ('n_gen', N_GEN),
+    verbose=True,
+    save_history=True,
+    seed=int(np.random.randint(1_000_000_000))     # fresh run-to-run seed
+)
+
+
+
+
 ```
 
+    [debug] mating deduper: <class 'pymoo.core.mixed.MixedVariableDuplicateElimination'>
+    [debug] algo deduper:   <class 'pymoo.core.duplicate.NoDuplicateElimination'>
+    [3.b] Using seeded sampling; n_seeds=3
     ==========================================================================================
     n_gen  |  n_eval  | n_nds  |     cv_min    |     cv_avg    |      eps      |   indicator  
     ==========================================================================================
-         1 |        1 |      1 |  0.000000E+00 |  0.000000E+00 |             - |             -
-         2 |      101 |      3 |  0.000000E+00 |           INF |  1.7314422982 |         ideal
-         3 |      201 |      3 |  0.000000E+00 |           INF |  0.000000E+00 |             f
-         4 |      301 |      3 |  0.000000E+00 |           INF |  0.000000E+00 |             f
-         5 |      401 |      3 |  0.000000E+00 |           INF |  0.000000E+00 |             f
-         6 |      501 |      3 |  0.000000E+00 |  0.0647216100 |  0.000000E+00 |             f
-         7 |      601 |      4 |  0.000000E+00 |  0.000000E+00 |  0.0004239819 |             f
-         8 |      701 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0757263538 |             f
-         9 |      801 |      5 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        10 |      901 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0066597663 |             f
-        11 |     1001 |      6 |  0.000000E+00 |  0.000000E+00 |  0.0903126134 |         ideal
-        12 |     1101 |      6 |  0.000000E+00 |  0.000000E+00 |  0.5560129507 |         ideal
-        13 |     1201 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0299969777 |             f
-        14 |     1301 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0132922056 |             f
-        15 |     1401 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0016813822 |             f
-        16 |     1501 |      6 |  0.000000E+00 |  0.000000E+00 |  0.1482957375 |         ideal
-        17 |     1601 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0253814383 |             f
-        18 |     1701 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0105541536 |             f
-        19 |     1801 |      9 |  0.000000E+00 |  0.000000E+00 |  0.2231570003 |         ideal
-        20 |     1901 |      9 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        21 |     2001 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0764794561 |         ideal
-        22 |     2101 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0198372220 |             f
-        23 |     2201 |     10 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        24 |     2301 |     13 |  0.000000E+00 |  0.000000E+00 |  0.8215708825 |         ideal
-        25 |     2401 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0303427219 |             f
-        26 |     2501 |     12 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        27 |     2601 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0055375632 |             f
-        28 |     2701 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0005046254 |             f
-        29 |     2801 |      6 |  0.000000E+00 |  0.000000E+00 |  0.0216761517 |             f
-        30 |     2901 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0723088254 |         ideal
-        31 |     3001 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0084736286 |             f
-        32 |     3101 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0075341643 |             f
-        33 |     3201 |      8 |  0.000000E+00 |  0.000000E+00 |  0.2278678920 |         ideal
-        34 |     3301 |      4 |  0.000000E+00 |  0.000000E+00 |  0.0340886746 |         ideal
-        35 |     3401 |      4 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        36 |     3501 |      6 |  0.000000E+00 |  0.000000E+00 |  0.1147246065 |         ideal
-        37 |     3601 |      6 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        38 |     3701 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0101897713 |         ideal
-        39 |     3801 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0033826478 |             f
-        40 |     3901 |      9 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        41 |     4001 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0173286963 |         ideal
-        42 |     4101 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0151078695 |             f
-        43 |     4201 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0010931337 |             f
-        44 |     4301 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0010931337 |             f
-        45 |     4401 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0328362985 |             f
-        46 |     4501 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0002340228 |             f
-        47 |     4601 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0002340228 |             f
-        48 |     4701 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0002340228 |             f
-        49 |     4801 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0009458049 |             f
-        50 |     4901 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0008727678 |             f
-        51 |     5001 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0250548920 |             f
-        52 |     5101 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0323098115 |         ideal
-        53 |     5201 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0280551442 |         ideal
-        54 |     5301 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0021769676 |             f
-        55 |     5401 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0124716525 |             f
-        56 |     5501 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0685207506 |         ideal
-        57 |     5601 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0605485675 |         ideal
-        58 |     5701 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0026752162 |             f
-        59 |     5801 |     18 |  0.000000E+00 |  0.000000E+00 |  0.0044189101 |             f
-        60 |     5901 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0059679998 |         ideal
-        61 |     6001 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0006010926 |             f
-        62 |     6101 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0043605477 |             f
-        63 |     6201 |     11 |  0.000000E+00 |  0.000000E+00 |  0.1290916501 |         ideal
-        64 |     6301 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0502270744 |             f
-        65 |     6401 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0102423221 |             f
-        66 |     6501 |     12 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        67 |     6601 |     12 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        68 |     6701 |     12 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        69 |     6801 |     12 |  0.000000E+00 |  0.000000E+00 |  0.1096450914 |         ideal
-        70 |     6901 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0593881570 |         ideal
-        71 |     7001 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0107798124 |             f
-        72 |     7101 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        73 |     7201 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        74 |     7301 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0030894852 |             f
-        75 |     7401 |     17 |  0.000000E+00 |  0.000000E+00 |  0.0036279386 |             f
-        76 |     7501 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0683854845 |         nadir
-        77 |     7601 |     17 |  0.000000E+00 |  0.000000E+00 |  0.0760353525 |         ideal
-        78 |     7701 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0249397955 |             f
-        79 |     7801 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        80 |     7901 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0192874200 |             f
-        81 |     8001 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0054196519 |             f
-        82 |     8101 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0018416074 |             f
-        83 |     8201 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0052746038 |             f
-        84 |     8301 |     15 |  0.000000E+00 |  0.000000E+00 |  0.1077879179 |         ideal
-        85 |     8401 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        86 |     8501 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        87 |     8601 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0126216682 |             f
-        88 |     8701 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0046381913 |             f
-        89 |     8801 |     17 |  0.000000E+00 |  0.000000E+00 |  0.0002520234 |             f
-        90 |     8901 |     17 |  0.000000E+00 |  0.000000E+00 |  0.0002520234 |             f
-        91 |     9001 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0079730583 |             f
-        92 |     9101 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0040783994 |             f
-        93 |     9201 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        94 |     9301 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        95 |     9401 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0026826784 |             f
-        96 |     9501 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0066458368 |             f
-        97 |     9601 |     11 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        98 |     9701 |     11 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
-        99 |     9801 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0104749022 |             f
-       100 |     9901 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0048196472 |             f
-    
+         1 |      100 |    100 |  0.000000E+00 |  0.000000E+00 |             - |             -
+         2 |      200 |     69 |  0.000000E+00 |  0.000000E+00 |  0.0747803309 |         ideal
+         3 |      300 |     71 |  0.000000E+00 |  0.000000E+00 |  0.0703587976 |         ideal
+         4 |      400 |      3 |  0.000000E+00 |  0.000000E+00 |  0.1370821834 |         ideal
+         5 |      500 |      4 |  0.000000E+00 |  0.000000E+00 |  0.1087328159 |         ideal
+         6 |      600 |      4 |  0.000000E+00 |  0.000000E+00 |  0.5155553232 |         ideal
+         7 |      700 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0180481505 |             f
+         8 |      800 |      7 |  0.000000E+00 |  0.000000E+00 |  0.0525839039 |         ideal
+         9 |      900 |      8 |  0.000000E+00 |  0.000000E+00 |  0.4859975937 |         ideal
+        10 |     1000 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0265039458 |             f
+        11 |     1100 |      9 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        12 |     1200 |      4 |  0.000000E+00 |  0.000000E+00 |  0.1600594256 |             f
+        13 |     1300 |      3 |  0.000000E+00 |  0.000000E+00 |  0.0067289761 |         ideal
+        14 |     1400 |      4 |  0.000000E+00 |  0.000000E+00 |  0.1159696352 |             f
+        15 |     1500 |      4 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        16 |     1600 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0779854759 |         ideal
+        17 |     1700 |      4 |  0.000000E+00 |  0.000000E+00 |  0.0522658630 |         ideal
+        18 |     1800 |      4 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        19 |     1900 |      4 |  0.000000E+00 |  0.000000E+00 |  0.0427027699 |         ideal
+        20 |     2000 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0352845601 |         ideal
+        21 |     2100 |      6 |  0.000000E+00 |  0.000000E+00 |  0.0583241175 |         ideal
+        22 |     2200 |      9 |  0.000000E+00 |  0.000000E+00 |  0.3907699247 |         ideal
+        23 |     2300 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0052835779 |             f
+        24 |     2400 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0346590404 |         ideal
+        25 |     2500 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0006308170 |             f
+        26 |     2600 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0006875006 |             f
+        27 |     2700 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0016918495 |             f
+        28 |     2800 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0232299633 |         ideal
+        29 |     2900 |      8 |  0.000000E+00 |  0.000000E+00 |  0.1926869384 |         ideal
+        30 |     3000 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0180855912 |             f
+        31 |     3100 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0452982923 |             f
+        32 |     3200 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0133416984 |         ideal
+        33 |     3300 |      4 |  0.000000E+00 |  0.000000E+00 |  0.0327238757 |         ideal
+        34 |     3400 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0935424479 |             f
+        35 |     3500 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0125389827 |             f
+        36 |     3600 |      5 |  0.000000E+00 |  0.000000E+00 |  0.3317752744 |         ideal
+        37 |     3700 |      5 |  0.000000E+00 |  0.000000E+00 |  0.0099068296 |         ideal
+        38 |     3800 |      5 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        39 |     3900 |      6 |  0.000000E+00 |  0.000000E+00 |  0.0376274075 |             f
+        40 |     4000 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0093219501 |         ideal
+        41 |     4100 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0033056803 |             f
+        42 |     4200 |      9 |  0.000000E+00 |  0.000000E+00 |  0.7418541433 |         nadir
+        43 |     4300 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0052000317 |             f
+        44 |     4400 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0408645671 |         ideal
+        45 |     4500 |      9 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        46 |     4600 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0094083526 |             f
+        47 |     4700 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0002013949 |             f
+        48 |     4800 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0080950806 |             f
+        49 |     4900 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0008656658 |             f
+        50 |     5000 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0318908275 |         ideal
+        51 |     5100 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0076553945 |             f
+        52 |     5200 |     10 |  0.000000E+00 |  0.000000E+00 |  0.1992511876 |         ideal
+        53 |     5300 |     10 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        54 |     5400 |      6 |  0.000000E+00 |  0.000000E+00 |  0.0376371753 |             f
+        55 |     5500 |      6 |  0.000000E+00 |  0.000000E+00 |  0.0455588855 |             f
+        56 |     5600 |      8 |  0.000000E+00 |  0.000000E+00 |  0.0316946199 |             f
+        57 |     5700 |      8 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        58 |     5800 |      8 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        59 |     5900 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0889816473 |         ideal
+        60 |     6000 |      9 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        61 |     6100 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0328268632 |             f
+        62 |     6200 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0245733199 |         ideal
+        63 |     6300 |      9 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        64 |     6400 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0195816035 |             f
+        65 |     6500 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0018943149 |             f
+        66 |     6600 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0018943149 |             f
+        67 |     6700 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0142145230 |             f
+        68 |     6800 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0159486332 |             f
+        69 |     6900 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0022773913 |             f
+        70 |     7000 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0148776443 |             f
+        71 |     7100 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0110302853 |             f
+        72 |     7200 |     13 |  0.000000E+00 |  0.000000E+00 |  0.1179442755 |         nadir
+        73 |     7300 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0109585694 |             f
+        74 |     7400 |     17 |  0.000000E+00 |  0.000000E+00 |  0.0075692901 |             f
+        75 |     7500 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0202611399 |             f
+        76 |     7600 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0077089474 |         ideal
+        77 |     7700 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0053115294 |         ideal
+        78 |     7800 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0142803280 |             f
+        79 |     7900 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0626762296 |         ideal
+        80 |     8000 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0029101519 |             f
+        81 |     8100 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        82 |     8200 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        83 |     8300 |     15 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        84 |     8400 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0239396179 |             f
+        85 |     8500 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0566032420 |         ideal
+        86 |     8600 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0162544060 |         ideal
+        87 |     8700 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0184680099 |             f
+        88 |     8800 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0039751924 |             f
+        89 |     8900 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        90 |     9000 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+        91 |     9100 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0014778332 |             f
+        92 |     9200 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0179816950 |         ideal
+        93 |     9300 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0212050567 |         ideal
+        94 |     9400 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0102646912 |             f
+        95 |     9500 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0014017973 |             f
+        96 |     9600 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0022706978 |             f
+        97 |     9700 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0038701046 |             f
+        98 |     9800 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0024394881 |             f
+        99 |     9900 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0024394881 |             f
+       100 |    10000 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0078880419 |             f
+       101 |    10100 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+       102 |    10200 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0228208788 |         ideal
+       103 |    10300 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0098503381 |             f
+       104 |    10400 |     11 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+       105 |    10500 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0130353012 |             f
+       106 |    10600 |     12 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+       107 |    10700 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0111675914 |             f
+       108 |    10800 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+       109 |    10900 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0037613470 |             f
+       110 |    11000 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0032715328 |             f
+       111 |    11100 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+       112 |    11200 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0040846583 |         ideal
+       113 |    11300 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0015514401 |             f
+       114 |    11400 |     17 |  0.000000E+00 |  0.000000E+00 |  0.0021737917 |             f
+       115 |    11500 |     17 |  0.000000E+00 |  0.000000E+00 |  0.0021737917 |             f
+       116 |    11600 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0436116740 |         ideal
+       117 |    11700 |     16 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+       118 |    11800 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0004546195 |             f
+       119 |    11900 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0038205817 |             f
+       120 |    12000 |     11 |  0.000000E+00 |  0.000000E+00 |  0.1316774484 |         nadir
+       121 |    12100 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0005011191 |             f
+       122 |    12200 |      9 |  0.000000E+00 |  0.000000E+00 |  0.0035114386 |             f
+       123 |    12300 |      9 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+       124 |    12400 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0247101694 |             f
+       125 |    12500 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0066748998 |             f
+       126 |    12600 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0002213090 |             f
+       127 |    12700 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0002213090 |             f
+       128 |    12800 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0430724358 |         ideal
+       129 |    12900 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0133630401 |             f
+       130 |    13000 |     12 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+       131 |    13100 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0235362762 |         ideal
+       132 |    13200 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0038758315 |             f
+       133 |    13300 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0022253364 |             f
+       134 |    13400 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0053639503 |             f
+       135 |    13500 |     12 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+       136 |    13600 |     12 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+       137 |    13700 |     10 |  0.000000E+00 |  0.000000E+00 |  0.0012027055 |             f
+       138 |    13800 |     11 |  0.000000E+00 |  0.000000E+00 |  0.0038063804 |             f
+       139 |    13900 |     12 |  0.000000E+00 |  0.000000E+00 |  0.0060407164 |             f
+       140 |    14000 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0004405462 |             f
+       141 |    14100 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0004405462 |             f
+       142 |    14200 |     15 |  0.000000E+00 |  0.000000E+00 |  0.0086539206 |             f
+       143 |    14300 |     16 |  0.000000E+00 |  0.000000E+00 |  0.0022860358 |             f
+       144 |    14400 |     13 |  0.000000E+00 |  0.000000E+00 |  0.0035066656 |             f
+       145 |    14500 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+       146 |    14600 |     13 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+       147 |    14700 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0115288375 |             f
+       148 |    14800 |     14 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+       149 |    14900 |     14 |  0.000000E+00 |  0.000000E+00 |  0.000000E+00 |             f
+       150 |    15000 |     14 |  0.000000E+00 |  0.000000E+00 |  0.0008354472 |             f
+
 
 d. Hypervolume Check
 
@@ -682,18 +815,343 @@ else:
     print('Did Not Find Solutions!!')
 ```
 
-    Hyper Volume ~ 3.795211
+    Hyper Volume ~ 4.121520
+
+
+
+    
+![png](output_29_1.png)
     
 
 
+3E: GA multi-seed restarts (union + HV)
+
+
+
+
+```python
+# === 3.e — GA Multi-Seed Restarts (union + Pareto + HV) — FIXED ===
+import numpy as np, matplotlib.pyplot as plt
+from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.core.mixed import MixedVariableMating, MixedVariableDuplicateElimination
+from pymoo.operators.mutation.pm import PolynomialMutation
+from pymoo.optimize import minimize
+from pymoo.indicators.hv import HV
+
+# Config (use your existing POP/N_GEN/MUT_PROB; tweak seeds if you like)
+POP   = globals().get("POP", 150)
+N_GEN = globals().get("N_GEN", 150)
+SEEDS = globals().get("SEEDS", [0,1,2,3,4,5,6,7,11,13])
+MUT_PROB = globals().get("MUT_PROB", 0.90)
+
+# Reuse your 3.b helper; it falls back to random if no seeds are available
+assert 'sample_from_seeds' in globals(), "sample_from_seeds() must be defined in 3.b"
+
+# --- Build an algorithm with the safe dedup config ---
+def make_algo():
+    return NSGA2(
+        pop_size=POP,
+        sampling=sample_from_seeds(),                                # seeds if present, else random
+        mating=MixedVariableMating(
+            eliminate_duplicates=MixedVariableDuplicateElimination() # ✅ dedup at mating (compatible with mixed dict vars)
+        ),
+        mutation=PolynomialMutation(prob=MUT_PROB),
+        eliminate_duplicates=False                                   # ✅ turn OFF algorithm-level dedup (prevents 'Individual.items()' crash)
+    )
+
+# Helpers to robustly extract final F/X (covers different pymoo versions)
+def extract_final_F(res):
+    F = getattr(res, "F", None)
+    if isinstance(F, np.ndarray) and F.ndim == 2 and len(F):
+        return F
+    algo = getattr(res, "algorithm", None)
+    if algo is not None and hasattr(algo, "pop"):
+        Fp = algo.pop.get("F")
+        if Fp is not None and len(Fp): return np.asarray(Fp)
+    H = getattr(res, "history", None)
+    if H:
+        e = H[-1]
+        try:
+            Fh = e.opt.get("F") or e.pop.get("F")
+            if Fh is not None and len(Fh): return np.asarray(Fh)
+        except Exception:
+            pass
+    return None
+
+def extract_final_X(res):
+    X = getattr(res, "X", None)
+    if isinstance(X, np.ndarray) and len(X):
+        return X
+    algo = getattr(res, "algorithm", None)
+    if algo is not None and hasattr(algo, "pop"):
+        Xp = algo.pop.get("X")
+        if Xp is not None and len(Xp): return np.asarray(Xp, dtype=object)
+    H = getattr(res, "history", None)
+    if H:
+        e = H[-1]
+        try:
+            Xh = e.opt.get("X") or e.pop.get("X")
+            if Xh is not None and len(Xh): return np.asarray(Xh, dtype=object)
+        except Exception:
+            pass
+    return None
+
+def pareto_mask(F):
+    F = np.asarray(F, float)
+    n = len(F)
+    keep = np.ones(n, dtype=bool)
+    for i in range(n):
+        if not np.isfinite(F[i]).all():
+            keep[i] = False; continue
+        for j in range(n):
+            if i == j: continue
+            if np.all(F[j] <= F[i]) and np.any(F[j] < F[i]):
+                keep[i] = False; break
+    return keep
+
+# --- Run all seeds (no hard failure if initial_population is empty) ---
+runs = []
+for sd in SEEDS:
+    try:
+        algo = make_algo()
+        res  = minimize(problem, algo, ('n_gen', N_GEN), verbose=False, seed=sd, save_history=True)
+        Ffin = extract_final_F(res)
+        Xfin = extract_final_X(res)
+        if Ffin is None or Xfin is None:
+            Ffin = np.empty((0,2)); Xfin = np.empty((0,), dtype=object)
+        m = np.isfinite(Ffin).all(axis=1)
+        Ffin, Xfin = Ffin[m], Xfin[m]
+        runs.append((sd, Ffin, Xfin))
+        print(f"[3.e] seed {sd}: {len(Ffin)} pts")
+    except Exception as e:
+        print(f"[3.e] seed {sd} failed: {e}")
+        runs.append((sd, np.empty((0,2)), np.empty((0,), dtype=object)))
+
+# --- Combine & Pareto-prune union ---
+allF = np.vstack([F for _,F,_ in runs]) if any(len(F) for _,F,_ in runs) else np.empty((0,2))
+allX = np.concatenate([X for _,_,X in runs]) if any(len(X) for _,_,X in runs) else np.empty((0,), dtype=object)
+
+if len(allF):
+    mask = pareto_mask(allF)
+    UNION_F = allF[mask]
+    UNION_X = allX[mask]
+else:
+    UNION_F = np.empty((0,2)); UNION_X = np.empty((0,), dtype=object)
+
+# --- Plot per-seed + union front ---
+plt.figure(figsize=(7,6))
+colors = ['tab:blue','tab:green','tab:purple','tab:brown','tab:olive','tab:red']
+for k,(sd,F,X) in enumerate(runs):
+    if len(F):
+        plt.scatter(F[:,0], F[:,1], s=14, alpha=0.35, color=colors[k % len(colors)], label=f"seed {sd}")
+if len(UNION_F):
+    plt.scatter(UNION_F[:,0], UNION_F[:,1], s=42, edgecolors='k', facecolors='none', linewidths=1.2, label="union Pareto")
+    lo = np.quantile(allF, 0.02, axis=0); hi = np.quantile(allF, 0.98, axis=0)
+    plt.xlim(lo[0], hi[0]); plt.ylim(lo[1], hi[1])
+plt.xlabel("Distance"); plt.ylabel("Material"); plt.title(f"Multi-seed GA (seeds={SEEDS})")
+plt.grid(True, alpha=0.3); 
+if len(UNION_F): plt.legend()
+plt.show()
+
+# --- HV at official reference point ---
+if len(UNION_F):
+    hv = HV(ref_point=[0.75, 10.0])(UNION_F)
+    print(f"Union HV @ ref(0.75,10.0): {hv:.6f}")
+else:
+    print("No finite points found across seeds.")
+
+# --- Convert union X (dict/object) to mechanism dicts for Step 5 ---
+def to_mech_list_from_X(problem, X_array):
+    out = []
+    for x in X_array:
+        x0, e, fj, m, t = problem.convert_1D_to_mech(x)
+        out.append({"x0": x0, "edges": e, "fixed_joints": fj, "motor": m, "target_joint": t})
+    return out
+
+UNION_MECHS = to_mech_list_from_X(problem, UNION_X) if len(UNION_X) else []
+print(f"[multi-seed] union Pareto size: {len(UNION_MECHS)}")
+
+```
+
+    [3.b] Using seeded sampling; n_seeds=3
+    [3.e] seed 0: 16 pts
+    [3.b] Using seeded sampling; n_seeds=3
+    [3.e] seed 1: 15 pts
+    [3.b] Using seeded sampling; n_seeds=3
+    [3.e] seed 2: 14 pts
+    [3.b] Using seeded sampling; n_seeds=3
+    [3.e] seed 3: 16 pts
+    [3.b] Using seeded sampling; n_seeds=3
+    [3.e] seed 4: 11 pts
+    [3.b] Using seeded sampling; n_seeds=3
+    [3.e] seed 5: 23 pts
+    [3.b] Using seeded sampling; n_seeds=3
+    [3.e] seed 6: 20 pts
+    [3.b] Using seeded sampling; n_seeds=3
+    [3.e] seed 7: 21 pts
+    [3.b] Using seeded sampling; n_seeds=3
+
+
+3E sanity check
+Compare union HV to single-run HV: higher = multi-seed helped.
+Look at feasible-only HV: this is the one that matters for scoring.
+Check per-seed contributions: ideally, multiple seeds contribute ≥1 union point. 
+
+
+```python
+# === Multi-seed QA / sanity checks (put under 3.e) ===
+import numpy as np
+from pymoo.indicators.hv import HV
+
+REF = np.array([0.75, 10.0])
+MAX_HV = float(np.prod(REF))  # 7.5
+
+def pareto_mask(F):
+    F = np.asarray(F, float)
+    n = len(F)
+    keep = np.ones(n, dtype=bool)
+    for i in range(n):
+        if not np.isfinite(F[i]).all():
+            keep[i] = False; continue
+        for j in range(n):
+            if i == j: continue
+            if np.all(F[j] <= F[i]) and np.any(F[j] < F[i]):
+                keep[i] = False; break
+    return keep
+
+# Rebuild ALL from the 'runs' you created in 3.e
+allF, sizes = [], []
+for sd, F, X in runs:
+    allF.append(F)
+    sizes.append(len(F))
+ALL = np.vstack(allF) if any(sizes) else np.empty((0,2))
+
+mask = pareto_mask(ALL) if len(ALL) else np.array([], dtype=bool)
+FRONT = ALL[mask] if len(ALL) else np.empty((0,2))
+
+# Union HV and fraction of theoretical max
+hv_union = HV(ref_point=REF)(FRONT) if len(FRONT) else 0.0
+print(f"Union HV @ ref {REF.tolist()}: {hv_union:.6f}  ({hv_union/MAX_HV:.1%} of max {MAX_HV:.3f})")
+print(f"Union Pareto size: {len(FRONT)}")
+
+# Feasible-only HV (challenge cares about feasible)
+if len(FRONT):
+    feas = (FRONT[:,0] <= REF[0]) & (FRONT[:,1] <= REF[1])
+    FRONT_feas = FRONT[feas]
+    hv_feas = HV(ref_point=REF)(FRONT_feas) if len(FRONT_feas) else 0.0
+    print(f"Feasible-only HV: {hv_feas:.6f}  ({(hv_feas/MAX_HV if MAX_HV>0 else 0):.1%})")
+    print(f"Feasible on union front: {len(FRONT_feas)}/{len(FRONT)}")
+else:
+    print("No union front points to evaluate feasibility.")
+
+# Per-seed feasible HV and contributions to union front
+offsets = np.cumsum([0] + sizes)  # index ranges inside ALL for each seed
+contrib = np.zeros(len(runs), dtype=int)
+if len(ALL):
+    idxs = np.where(mask)[0]
+    for idx in idxs:
+        k = np.searchsorted(offsets, idx, side='right') - 1
+        contrib[k] += 1
+
+print("\nPer-seed stats:")
+for i, (sd, F, X) in enumerate(runs):
+    if len(F):
+        Ff = F[(F[:,0] <= REF[0]) & (F[:,1] <= REF[1])]
+        hv_s = HV(ref_point=REF)(Ff) if len(Ff) else 0.0
+        print(f"  Seed {sd}: {len(Ff):3d}/{len(F):3d} feasible, HV={hv_s:.6f}, contributes {contrib[i]} union pts")
+    else:
+        print(f"  Seed {sd}: no points")
+
+```
+
+    Union HV @ ref [0.75, 10.0]: 5.289884  (70.5% of max 7.500)
+    Union Pareto size: 45
+    Feasible-only HV: 5.289884  (70.5%)
+    Feasible on union front: 45/45
     
-![png](output_26_1.png)
-    
+    Per-seed stats:
+      Seed 0:  34/ 34 feasible, HV=5.133763, contributes 7 union pts
+      Seed 1:  19/ 19 feasible, HV=5.168618, contributes 9 union pts
+      Seed 2:  27/ 27 feasible, HV=5.124789, contributes 7 union pts
+      Seed 3:  17/ 17 feasible, HV=5.071429, contributes 7 union pts
+      Seed 4:  28/ 28 feasible, HV=5.175048, contributes 0 union pts
+      Seed 5:  17/ 17 feasible, HV=4.675517, contributes 0 union pts
+      Seed 6:  14/ 14 feasible, HV=4.684825, contributes 0 union pts
+      Seed 7:  23/ 23 feasible, HV=4.706825, contributes 0 union pts
+      Seed 11:  27/ 27 feasible, HV=5.171930, contributes 10 union pts
+      Seed 13:  13/ 13 feasible, HV=5.142278, contributes 5 union pts
 
 
 # 4. GD Optimization
 
 a. GD Setup
+
+
+```python
+# === 4. GD Refinement (lite & safe) ===
+# Replaces BOTH: (a) distance-only loop and (b) material-aware loop.
+# Uses RUN_GD / GD_TOPK / GD_STEPS switches defined at the top.
+
+from pymoo.indicators.hv import HV
+from tqdm.auto import trange
+import numpy as np
+
+if RUN_GD and (not results.X is None):
+    # 1) Build a small batch from GA results (top-K)
+    X_batch = results.X if not isinstance(results.X, dict) else [results.X]
+    X_objs  = results.F if hasattr(results, "F") else None
+
+    # Rank by (distance + 0.1*material) if F is available; else just take first K
+    if X_objs is not None and len(X_objs) == len(X_batch):
+        order = np.argsort(X_objs[:,0] + 0.1*X_objs[:,1])[:GD_TOPK]
+        X_pick = [X_batch[i] for i in order]
+    else:
+        X_pick = X_batch[:GD_TOPK]
+
+    # 2) Convert to mechanism representation
+    x0s, edges, fixed_joints, motors, target_idxs = [], [], [], [], []
+    for sol in (X_pick if isinstance(X_pick, (list, tuple)) else [X_pick]):
+        x0, e, fj, m, t = problem.convert_1D_to_mech(sol)
+        x0s.append(x0); edges.append(e); fixed_joints.append(fj); motors.append(m); target_idxs.append(t)
+
+    # 3) Warm-up compile (first call can be slow, done once)
+    _ = differentiable_optimization_tools(
+        x0s, edges, fixed_joints, motors, target_curves[curve_index], target_idxs
+    )
+
+    # 4) Small, safe bi-objective refinement with decay + patience
+    x_cur = [arr.copy() for arr in x0s]
+    step  = 3e-4
+    decay = 0.97
+    ref   = np.array([0.75, 10.0])
+    w_dist, w_mat = 0.7, 0.3
+    patience, no_improve = 25, 0
+
+    def batch_HV(Xlist):
+        F = []
+        for Xi, Ei, Fj, Mi, Ti in zip(Xlist, edges, fixed_joints, motors, target_idxs):
+            d, m = TOOLS(Xi, Ei, Fj, Mi, target_curves[curve_index], target_idx=Ti)
+            F.append([d, m])
+        F = np.asarray(F, float)
+        F = F[np.isfinite(F).all(axis=1)]
+        return (HV(ref_point=ref)(F) if len(F) else 0.0), F
+
+    hv0, _ = batch_HV(x_cur)
+
+    for it in trange(GD_STEPS, desc="[GD-lite]"):
+        d, m, g_d, g_m = differentiable_optimization_tools(
+            x_cur, edges, fixed_joints, motors, target_curves[curve_index], target_idxs
+        )
+
+        # weighted descent direction (normalize per design)
+        dirs = []
+        for gd_i, gm_i in zip(g_d, g_m):
+            g = w_dist*gd_i + w_mat*(gm_i/10.0)   # scale material gradient
+
+```
+
+GD lite replacement of material and dstance
+
 
 
 ```python
@@ -739,89 +1197,105 @@ distances, materials, distance_grads, material_grads = differentiable_optimizati
 # print(materials, distances)
 ```
 
-GD Optimization - distance-based
+
+```python
+# === Merge populations (No-GD version): GA batch only ===
+# Place this RIGHT AFTER your GD-lite cell and BEFORE Step 5.
+
+assert all(n in globals() for n in ["x0s","edges","fixed_joints","motors","target_idxs"]), \
+    "Run the GA→batch setup that builds x0s/edges/fixed_joints/motors/target_idxs first."
+
+combined_x0s          = list(x0s)
+combined_edges        = list(edges)
+combined_fixed_joints = list(fixed_joints)
+combined_motors       = list(motors)
+combined_target_idxs  = list(target_idxs)
+
+print(f"[merge/no-GD] combined={len(combined_x0s)} designs (GA only)")
+
+# Sanity check
+sizes = {len(combined_x0s), len(combined_edges), len(combined_fixed_joints),
+         len(combined_motors), len(combined_target_idxs)}
+assert len(sizes) == 1, f"Merged lists misaligned (sizes={sizes})"
+```
+
+    [merge/no-GD] combined=22 designs (GA only)
+
+
+Prep for step 5
 
 
 ```python
-x = x0s.copy()
+# === Step 5 prep: prefer the union Pareto mechs from 3.e ===
+try:
+    candidate_list = UNION_MECHS
+    print(f"[step5-prep] Using UNION_MECHS ({len(candidate_list)}) as candidate_list.")
+except NameError:
+    print("[step5-prep] UNION_MECHS not found; Step 5 will choose from GA/GD fallbacks.")
 
-step_size = 4e-4
-n_steps = 1000
-
-# keep track of which members are done optimizing
-done_optimizing = np.zeros(len(x), dtype=bool)
-
-x_last = x.copy()
-
-for step in trange(n_steps):
-    
-    # get current distances, materials and gradients
-    distances, materials, distance_grads, material_grads = differentiable_optimization_tools(
-        x,
-        edges,
-        fixed_joints,
-        motors,
-        target_curves[curve_index],
-        target_idxs
-    )
-    
-    # only update members that are valid and not done optimizing
-    valids = np.where(np.logical_and(distances <= 0.75, materials <= 10.0))[0]
-    invalids = np.where(~np.logical_and(distances <= 0.75, materials <= 10.0))[0]
-    
-    # if a member is invalid, revert to last step and mark as done optimizing
-    for i in invalids:
-        done_optimizing[i] = True
-        x[i] = x_last[i]
-    
-    # keep a copy of last step
-    x_last = x.copy()
-    
-    # update valid members
-    for i in valids:
-        if done_optimizing[i]:
-            continue
-        x[i] = x[i] - step_size * distance_grads[i]
-        
-    if np.all(done_optimizing):
-        print(f'All members are done optimizing at step {step}')
-        break
 ```
 
+    [step5-prep] Using UNION_MECHS (45) as candidate_list.
 
-      0%|          | 0/1000 [00:00<?, ?it/s]
 
-
-Combination of populations
+Makes sure we use the improved result from multi seed 
 
 
 ```python
-combined_x0s = x0s + x
-combined_edges = edges + edges
-combined_fixed_joints = fixed_joints + fixed_joints
-combined_motors = motors + motors
-combined_target_idxs = target_idxs + target_idxs
+# Use the multi-seed union for saving
+candidate_list = UNION_MECHS
+print(f"[step5-prep] Using UNION_MECHS ({len(candidate_list)}) as candidate_list.")
 
 ```
+
+    [step5-prep] Using UNION_MECHS (45) as candidate_list.
+
+
+preview the candidate score vs saved
+
+
+```python
+from LINKS.CP import make_empty_submission, evaluate_submission
+import numpy as np, os
+
+ci = curve_index + 1  # 1-based for the scorer
+assert 'candidate_list' in globals() and len(candidate_list), "candidate_list is empty"
+
+# current saved score
+if os.path.exists("my_submission.npy"):
+    saved = np.load("my_submission.npy", allow_pickle=True).item()
+    saved_list = saved.get(f"Problem {ci}", [])
+    saved_score = evaluate_submission({**make_empty_submission(), f"Problem {ci}": saved_list})["Score Breakdown"][f"Problem {ci}"] if saved_list else 0.0
+else:
+    saved_score = 0.0
+
+# candidate score (union mechs)
+cand_score = evaluate_submission({**make_empty_submission(), f"Problem {ci}": candidate_list[:1000]})["Score Breakdown"][f"Problem {ci}"]
+
+print(f"Saved score for Problem {ci}:     {saved_score:.6f}")
+print(f"Candidate (union) score for P{ci}: {cand_score:.6f}")
+print("Will update:", cand_score > saved_score + 1e-12)
+```
+
+    Saved score for Problem 1:     5.564021
+    Candidate (union) score for P1: 5.289884
+    Will update: False
+
 
 # 5. Compare and Save Improved Solutions (per curve)
 
 
 ```python
-# === Parametric per-curve updater (uses curve_index) =======================
-# Requires: a variable `curve_index` defined earlier (0..5).
-# Behavior: builds a candidate list (combined_* preferred; else results.X),
-# evaluates ONLY Problem {curve_index+1} against what's saved in my_submission.npy,
-# and replaces that problem if the candidate scores higher. Other problems untouched.
+# === Step 5: Compare & Save Improved Solutions (per curve) ===
+# Place this AFTER 3.e (UNION_MECHS) and AFTER 4b (Material-GD) so both are available.
 
 import os, time
 import numpy as np
 from LINKS.CP import make_empty_submission, evaluate_submission
 
-# ----- Config -----
 submission_path = "my_submission.npy"
-per_problem_cap = 1000
-require_margin = 1e-12  # minimal improvement to count as "better"
+require_margin  = 1e-12
+per_problem_cap = 1000   # cap per problem
 
 # ----- Helpers -----
 def load_submission(path=submission_path):
@@ -830,7 +1304,6 @@ def load_submission(path=submission_path):
     return make_empty_submission()
 
 def save_submission(sub, path=submission_path):
-    # tiny safety: timestamped backup before overwrite
     if os.path.exists(path):
         ts = time.strftime("%Y%m%d-%H%M%S")
         bak = path.replace(".npy", f".{ts}.bak.npy")
@@ -838,81 +1311,158 @@ def save_submission(sub, path=submission_path):
         print(f"[backup] {bak}")
     np.save(path, sub)
 
-def cap_list(lst, limit=per_problem_cap):
+def cap_list(lst, limit=None):
+    if limit is None: limit = per_problem_cap
     return lst[:limit]
-
-def to_mech_list(x0s, edges, fixed_joints, motors, target_idxs):
-    out = []
-    for x0, e, fj, m, t in zip(x0s, edges, fixed_joints, motors, target_idxs):
-        out.append({"x0": x0, "edges": e, "fixed_joints": fj, "motor": m, "target_joint": t})
-    return out
 
 def score_only_curve(mech_list, curve_1based):
     tmp = make_empty_submission()
     key = f"Problem {curve_1based}"
     tmp[key] = mech_list
-    res = evaluate_submission(tmp)
-    return res["Score Breakdown"][key]
+    return evaluate_submission(tmp)["Score Breakdown"][key]
 
-# ----- Build candidate list for THIS curve -----
-# Prefer your combined (post-GD) set if present, else convert results.X via your problem.
-try:
-    candidate_list = to_mech_list(
-        combined_x0s, combined_edges, combined_fixed_joints, combined_motors, combined_target_idxs
-    )
-    print(f"[info] Using combined post-GD population ({len(candidate_list)} solutions).")
-except NameError:
-    print("[info] No combined_* found; falling back to results.X → convert_1D_to_mech.")
-    iterable = results.X if not isinstance(results.X, dict) else [results.X]
-    cx0, ce, cfix, cmot, ctar = [], [], [], [], []
-    for sol in iterable:
-        x0, e, fj, m, t = problem.convert_1D_to_mech(sol)
-        cx0.append(x0); ce.append(e); cfix.append(fj); cmot.append(m); ctar.append(t)
-    candidate_list = to_mech_list(cx0, ce, cfix, cmot, ctar)
-    print(f"[info] Built candidate list from results.X ({len(candidate_list)} solutions).")
+def pareto_mask(F):
+    n = len(F)
+    keep = np.ones(n, dtype=bool)
+    for i in range(n):
+        for j in range(n):
+            if i == j: 
+                continue
+            if np.all(F[j] <= F[i]) and np.any(F[j] < F[i]):
+                keep[i] = False
+                break
+    return keep
 
-candidate_list = cap_list(candidate_list)
+def eval_mech_list(mechs):
+    F = []
+    for mech in mechs:
+        d, mm = TOOLS(mech["x0"], mech["edges"], mech["fixed_joints"], mech["motor"],
+                      target_curves[curve_index], target_idx=mech["target_joint"])
+        F.append([d, mm])
+    return np.asarray(F, float)
 
-# ----- Evaluate ONLY the selected curve -----
+# ----- Build pool: GA union ∪ material-GD ∪ fallback combined -----
+POOL = []
+
+# GA multi-seed union (preferred)
+if 'UNION_MECHS' in globals() and len(UNION_MECHS) > 0:
+    POOL += UNION_MECHS
+
+# Material-aware GD batch (if ran)
+if 'MAT_x0s' in globals():
+    POOL += [
+        {"x0": x0, "edges": e, "fixed_joints": fj, "motor": m, "target_joint": t}
+        for x0, e, fj, m, t in zip(MAT_x0s, edges, fixed_joints, motors, target_idxs)
+    ]
+
+# Fallback combined (GA+GD) if nothing else
+if len(POOL) == 0 and 'combined_x0s' in globals():
+    POOL = [
+        {"x0": x0, "edges": e, "fixed_joints": fj, "motor": m, "target_joint": t}
+        for x0, e, fj, m, t in zip(combined_x0s, combined_edges, combined_fixed_joints, combined_motors, combined_target_idxs)
+    ]
+
+# Feasible filter
+F_pool = eval_mech_list(POOL) if len(POOL) else np.empty((0,2))
+feas = (F_pool[:,0] <= 0.75) & (F_pool[:,1] <= 10.0)
+POOL, F_pool = [POOL[i] for i in np.where(feas)[0]], F_pool[feas]
+
+# Light ε-dedup before Pareto
+if len(F_pool):
+    eps_d, eps_m = 5e-5, 5e-4
+    bins = np.stack([np.floor(F_pool[:,0]/eps_d), np.floor(F_pool[:,1]/eps_m)], axis=1)
+    _, uniq_idx = np.unique(bins, axis=0, return_index=True)
+    uniq_idx = np.sort(uniq_idx)
+    POOL, F_pool = [POOL[i] for i in uniq_idx], F_pool[uniq_idx]
+
+# Pareto prune + cap -> candidate_list
+mask = pareto_mask(F_pool) if len(F_pool) else np.array([], dtype=bool)
+candidate_list = cap_list([POOL[i] for i in np.where(mask)[0]])
+print(f"[Step5] candidates after GA∪MAT prune: {len(candidate_list)}")
+
+# --- Ensure curve key and load existing submission BEFORE scoring/union ---
 assert 0 <= curve_index <= 5, "curve_index must be in [0..5]"
 curve_1based = curve_index + 1
 key = f"Problem {curve_1based}"
-print(f"\n=== Evaluating {key} (curve_index={curve_index}) ===")
 
 submission = load_submission(submission_path)
+
+# --- Union with currently saved solutions, Pareto prune again, then cap ---
+saved_list = submission.get(key, []) or []
+union_list = saved_list + candidate_list
+
+F_union = eval_mech_list(union_list) if len(union_list) else np.empty((0,2))
+if len(F_union):
+    mask_u = pareto_mask(F_union)
+    union_list = [union_list[i] for i in np.where(mask_u)[0]]
+
+candidate_list = cap_list(union_list)  # keep ≤1000 after pruning
+print(f"[Step5] after union+saved prune: {len(candidate_list)}")
+
+# ----- Score & conditionally save this curve only -----
 before_overall = evaluate_submission(submission)["Overall Score"] if any(len(v) for v in submission.values()) else 0.0
 
-old_list = submission.get(key, [])
+old_list  = submission.get(key, [])
 old_score = score_only_curve(old_list, curve_1based) if old_list else 0.0
 cand_score = score_only_curve(candidate_list, curve_1based)
 
+print(f"\n=== Evaluating {key} (curve_index={curve_index}) ===")
 print(f"Current saved {key} score: {old_score:.6f} (with {len(old_list)} solutions)")
 print(f"Candidate {key} score:    {cand_score:.6f} (with {len(candidate_list)} solutions)")
 
-# ----- Replace iff better -----
-improvement = cand_score - old_score
-if improvement > require_margin:
+if cand_score > old_score + require_margin:
     submission[key] = candidate_list
     save_submission(submission, submission_path)
     after_overall = evaluate_submission(submission)["Overall Score"]
-    print(f"→ Updated {key}. Δscore = +{improvement:.6f}")
+    print(f"→ Updated {key}. Δscore = +{cand_score - old_score:.6f}")
     print(f"→ New {key} score: {cand_score:.6f}")
     print(f"→ Overall submission score: {after_overall:.6f} (was {before_overall:.6f})")
 else:
     print("→ No update: candidate did not beat current saved score.")
 
+
 ```
 
-    [info] Using combined post-GD population (20 solutions).
+    [Step5] candidates after GA∪MAT prune: 43
+    [Step5] after union+saved prune: 59
     
     === Evaluating Problem 1 (curve_index=0) ===
-    Current saved Problem 1 score: 3.291320 (with 12 solutions)
-    Candidate Problem 1 score:    4.070118 (with 20 solutions)
-    [backup] my_submission.20250929-025329.bak.npy
-    → Updated Problem 1. Δscore = +0.778797
-    → New Problem 1 score: 4.070118
-    → Overall submission score: 2.778830 (was 2.649030)
-    
+    Current saved Problem 1 score: 5.564021 (with 42 solutions)
+    Candidate Problem 1 score:    5.750574 (with 59 solutions)
+    [backup] my_submission.20250930-181601.bak.npy
+    → Updated Problem 1. Δscore = +0.186552
+    → New Problem 1 score: 5.750574
+    → Overall submission score: 0.958429 (was 0.927337)
+
+
+
+```python
+from pymoo.indicators.hv import HV
+
+ci = curve_index + 1
+saved_list = submission.get(f"Problem {ci}", [])
+ref = [0.75, 10.0]
+hv = HV(ref_point=ref)
+
+Fs = eval_mech_list(saved_list) if len(saved_list) else np.empty((0,2))
+Fc = eval_mech_list(candidate_list) if len(candidate_list) else np.empty((0,2))
+
+print("HV(saved) =", hv(Fs) if len(Fs) else 0.0)
+print("HV(cand)  =", hv(Fc) if len(Fc) else 0.0)
+
+if len(Fs) and len(Fc):
+    print("saved min-dist / min-mat:", Fs[Fs[:,0].argmin()], Fs[Fs[:,1].argmin()])
+    print("cand  min-dist / min-mat:", Fc[Fc[:,0].argmin()], Fc[Fc[:,1].argmin()])
+
+```
+
+    HV(saved) = 5.750574101945826
+    HV(cand)  = 5.750574101945826
+    saved min-dist / min-mat: [0.06542479 9.19402122] [0.58613104 0.99758142]
+    cand  min-dist / min-mat: [0.06542479 9.19402122] [0.58613104 0.99758142]
+
+
+Run your small evaluator to confirm update or no:
 
 
 ```python
@@ -928,8 +1478,8 @@ print(score)
 
 ```
 
-    {'Overall Score': 2.778829941417579, 'Score Breakdown': {'Problem 1': 4.070117712301119, 'Problem 2': 1.8311033755866362, 'Problem 3': 3.1251822811640793, 'Problem 4': 3.144530341569336, 'Problem 5': 2.322355471764368, 'Problem 6': 2.1796904661199363}}
-    
+    {'Overall Score': 0.9584289521856281, 'Score Breakdown': {'Problem 1': 5.750573713113768, 'Problem 2': 0.0, 'Problem 3': 0.0, 'Problem 4': 0.0, 'Problem 5': 0.0, 'Problem 6': 0.0}}
+
 
 # Extra. Save File as Markdown
 
@@ -971,5 +1521,10 @@ except Exception as e:
 
 ```
 
-    ✅ Saved as c:\Users\smuti\OneDrive\Desktop\CM_3D-Pen\2155-Optimization-Challenge-Problem\z_Challegen-Problem-1_SM-BA_v2.md
-    
+    ✅ Saved as /Users/berfin/Documents/GitHub/2155-Optimization-Challenge-Problem/z_Challegen-Problem-1_SM-BA_v2.md
+
+
+
+```python
+
+```
